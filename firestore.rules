@@ -1,0 +1,308 @@
+rules_version = '2';
+
+// 가족 비상 연락망 보안 규칙.
+// 모든 권한 검사는 여기서 한다. 화면에서 버튼을 숨기는 것은 편의일 뿐이다.
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    // ---------- 공통 ----------
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function memberPath(uid) {
+      return /databases/$(db)/documents/members/$(uid);
+    }
+
+    function me() {
+      return get(memberPath(request.auth.uid)).data;
+    }
+
+    // 관리자가 등록하고 활성화한 가족만 데이터에 접근할 수 있다.
+    // 누군가 Firebase 인증에 직접 가입하더라도 members 문서가 없으면 아무것도 못 본다.
+    function isMember() {
+      return signedIn()
+        && exists(memberPath(request.auth.uid))
+        && me().active == true;
+    }
+
+    function isAdmin() {
+      return isMember() && me().role == 'admin';
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function str(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    function optStr(d, key, max) {
+      return !(key in d) || d[key] == null || str(d[key], max);
+    }
+
+    function optNum(d, key) {
+      return !(key in d) || d[key] == null || d[key] is number;
+    }
+
+    function changed() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    // ---------- 위치 기록 ----------
+
+    function validLocation(d) {
+      return (d.lat == null || (d.lat is number && d.lat >= -90 && d.lat <= 90))
+        && (d.lng == null || (d.lng is number && d.lng >= -180 && d.lng <= 180))
+        && optNum(d, 'accuracy');
+    }
+
+    function validCheckinType(t) {
+      return t in ['safe', 'help', 'checkpoint'];
+    }
+
+    // members.last 에 저장되는 "마지막 신고" 요약
+    function validLast(l) {
+      return l == null || (
+        l is map
+        && l.keys().hasOnly(['type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt'])
+        && validCheckinType(l.type)
+        && validLocation(l)
+        && optStr(l, 'note', 300)
+        && l.at is timestamp
+        && l.clientAt is timestamp
+      );
+    }
+
+    // ---------- 초기 설정 (첫 관리자) ----------
+
+    // 사이트를 처음 연 사람이 첫 관리자가 되고, 그 순간 이 문서가 생겨 경로가 영구히 닫힌다.
+    match /config/setup {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['by', 'at'])
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.at == request.time
+        && getAfter(memberPath(request.auth.uid)).data.role == 'admin';
+      allow update, delete: if false;
+    }
+
+    // ---------- 가족 (공개 범위: 가족 전체) ----------
+
+    function validMember(d) {
+      return d.keys().hasOnly(['name', 'phone', 'role', 'active', 'declareCredits', 'last', 'order', 'createdAt', 'updatedAt'])
+        && str(d.name, 40) && d.name.size() > 0
+        && str(d.phone, 30)
+        && d.role in ['admin', 'member']
+        && d.active is bool
+        && d.declareCredits is int && d.declareCredits >= 0 && d.declareCredits <= 3
+        && (!('last' in d) || validLast(d.last))
+        && optNum(d, 'order');
+    }
+
+    // 본인이 바꿀 수 있는 것: 마지막 신고, 전화번호
+    function selfEdit() {
+      return changed().hasOnly(['last', 'phone', 'updatedAt'])
+        && validMember(request.resource.data);
+    }
+
+    // 본인이 비상선언권 1회를 쓰는 경우. 같은 일괄 쓰기에서 비상 문서가 본인 명의로 켜져야 한다.
+    function usingCredit() {
+      let emergencyAfter = getAfter(/databases/$(db)/documents/emergency/current).data;
+      return changed().hasOnly(['declareCredits'])
+        && resource.data.declareCredits >= 1
+        && request.resource.data.declareCredits == resource.data.declareCredits - 1
+        && emergencyAfter.active == true
+        && emergencyAfter.declaredBy == request.auth.uid;
+    }
+
+    match /members/{uid} {
+      // 본인 문서는 등록 전에도 읽을 수 있어야 "등록 대기" 화면이 등록 순간을 알아챈다.
+      allow read: if isMember() || isSelf(uid);
+
+      allow create: if (isAdmin() && validMember(request.resource.data))
+        || (
+          // 첫 관리자 등록: 설정 문서가 아직 없고, 같은 일괄 쓰기에서 만들어져야 한다.
+          isSelf(uid)
+          && !exists(/databases/$(db)/documents/config/setup)
+          && existsAfter(/databases/$(db)/documents/config/setup)
+          && validMember(request.resource.data)
+          && request.resource.data.role == 'admin'
+          && request.resource.data.active == true
+        );
+
+      allow update: if (isAdmin() && validMember(request.resource.data))
+        || (isSelf(uid) && isMember() && (selfEdit() || usingCredit()));
+
+      // 관리자는 자기 자신을 지울 수 없다 (관리자가 0명이 되는 사고 방지).
+      allow delete: if isAdmin() && !isSelf(uid);
+    }
+
+    // ---------- 민감한 개인정보 (본인과 관리자만) ----------
+
+    function validProfile(d) {
+      return d.keys().hasOnly(['gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact', 'updatedAt'])
+        && optStr(d, 'gender', 10)
+        && optStr(d, 'birthDate', 10)
+        && optStr(d, 'bloodType', 10)
+        && optStr(d, 'email', 120)
+        && optStr(d, 'address', 200)
+        && optStr(d, 'medical', 500)
+        && optStr(d, 'emergencyContact', 100);
+    }
+
+    match /profiles/{uid} {
+      allow read: if isAdmin() || (isSelf(uid) && isMember());
+      allow create, update: if (isAdmin() || (isSelf(uid) && isMember()))
+        && validProfile(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // ---------- 생존신고·체크포인트 기록 ----------
+
+    match /checkins/{id} {
+      allow read: if isAdmin() || (isMember() && resource.data.uid == request.auth.uid);
+      allow create: if isMember()
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt', 'emergencyAt'])
+        && request.resource.data.uid == request.auth.uid
+        && str(request.resource.data.name, 40)
+        && validCheckinType(request.resource.data.type)
+        && validLocation(request.resource.data)
+        && optStr(request.resource.data, 'note', 300)
+        && request.resource.data.at == request.time
+        && request.resource.data.clientAt is timestamp;
+      // 기록은 고칠 수 없다. 관리자만 지울 수 있다.
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- 비상 상태 ----------
+
+    function validEmergency(d) {
+      return d.keys().hasOnly(['active', 'type', 'message', 'declaredBy', 'declaredByName', 'declaredAt', 'endedBy', 'endedByName', 'endedAt', 'notifiedKey'])
+        && d.active is bool
+        && optStr(d, 'type', 30)
+        && optStr(d, 'message', 500)
+        && optStr(d, 'declaredBy', 128)
+        && optStr(d, 'declaredByName', 40);
+    }
+
+    // 일반 가족의 선언: 선언권이 남아 있고, 같은 일괄 쓰기에서 1회가 차감돼야 한다.
+    function memberDeclare() {
+      let d = request.resource.data;
+      return isMember()
+        && validEmergency(d)
+        && d.active == true
+        && d.declaredBy == request.auth.uid
+        && d.declaredByName == me().name
+        && d.declaredAt == request.time
+        && me().declareCredits >= 1
+        && getAfter(memberPath(request.auth.uid)).data.declareCredits == me().declareCredits - 1;
+    }
+
+    match /emergency/current {
+      allow read: if isMember();
+      allow create: if (isAdmin() && validEmergency(request.resource.data))
+        || memberDeclare();
+      // 이미 비상 중이면 일반 가족은 덮어쓸 수 없다. 해제는 관리자만 한다.
+      allow update: if (isAdmin() && validEmergency(request.resource.data))
+        || (resource.data.active == false
+            && changed().hasOnly(['active', 'type', 'message', 'declaredBy', 'declaredByName', 'declaredAt'])
+            && memberDeclare());
+      allow delete: if false;
+    }
+
+    match /emergencyLog/{id} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && request.resource.data.keys().hasOnly(['action', 'type', 'message', 'by', 'byName', 'at'])
+        && request.resource.data.action in ['declare', 'end']
+        && (request.resource.data.action == 'declare' || isAdmin())
+        && request.resource.data.by == request.auth.uid
+        && str(request.resource.data.byName, 40)
+        && optStr(request.resource.data, 'type', 30)
+        && optStr(request.resource.data, 'message', 500)
+        && request.resource.data.at == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- 집합장소 (1~10순위) ----------
+
+    function validMeetingPoint(rank, d) {
+      return d.keys().hasOnly(['rank', 'name', 'address', 'lat', 'lng', 'offsetHours', 'waitMinutes', 'overrideAt', 'note', 'updatedAt'])
+        && d.rank == int(rank)
+        && str(d.name, 60) && d.name.size() > 0
+        && optStr(d, 'address', 200)
+        && validLocation(d)
+        && d.offsetHours is number && d.offsetHours >= 0 && d.offsetHours <= 24 * 60
+        && d.waitMinutes is number && d.waitMinutes >= 0 && d.waitMinutes <= 24 * 60
+        && (!('overrideAt' in d) || d.overrideAt == null || d.overrideAt is timestamp)
+        && optStr(d, 'note', 500);
+    }
+
+    match /meetingPoints/{rank} {
+      allow read: if isMember();
+      allow create, update: if isAdmin()
+        && rank in ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']
+        && validMeetingPoint(rank, request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // 집합장소에 남기는 기록 ("여기 왔다 감, 2순위로 이동")
+    match /meetingLogs/{id} {
+      allow read: if isMember();
+      allow create: if isMember()
+        && request.resource.data.keys().hasOnly(['rank', 'uid', 'name', 'message', 'lat', 'lng', 'accuracy', 'at', 'clientAt'])
+        && request.resource.data.rank is int
+        && request.resource.data.rank >= 1 && request.resource.data.rank <= 10
+        && request.resource.data.uid == request.auth.uid
+        && str(request.resource.data.name, 40)
+        && str(request.resource.data.message, 300)
+        && validLocation(request.resource.data)
+        && request.resource.data.at == request.time
+        && request.resource.data.clientAt is timestamp;
+      allow update: if false;
+      allow delete: if isAdmin() || (isMember() && resource.data.uid == request.auth.uid);
+    }
+
+    // ---------- 비상 프로토콜 ----------
+
+    match /protocols/{id} {
+      allow read: if isMember();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'icon', 'order', 'summary', 'steps', 'checklist', 'updatedAt'])
+        && str(request.resource.data.title, 60)
+        && optStr(request.resource.data, 'icon', 8)
+        && optStr(request.resource.data, 'summary', 300)
+        && request.resource.data.steps is list && request.resource.data.steps.size() <= 10
+        && request.resource.data.checklist is list && request.resource.data.checklist.size() <= 80;
+      allow delete: if isAdmin();
+    }
+
+    // 체크리스트 체크 상태 (사람마다)
+    match /checklists/{uid} {
+      allow read: if isAdmin() || (isSelf(uid) && isMember());
+      allow create, update: if isSelf(uid) && isMember()
+        && request.resource.data.keys().hasOnly(['done', 'updatedAt'])
+        && request.resource.data.done is map
+        && request.resource.data.done.size() <= 600;
+      allow delete: if isAdmin();
+    }
+
+    // ---------- 알림 토큰 ----------
+
+    // 토큰은 기기마다 하나다. 같은 휴대폰에서 다른 가족이 로그인하면 소유자가 바뀐다.
+    match /pushTokens/{token} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if isMember()
+        && request.resource.data.keys().hasOnly(['uid', 'platform', 'at'])
+        && request.resource.data.uid == request.auth.uid
+        && optStr(request.resource.data, 'platform', 200)
+        && request.resource.data.at == request.time;
+      allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
+    }
+  }
+}

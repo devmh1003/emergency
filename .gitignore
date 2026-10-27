@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+firebase-debug.log*
+firestore-debug.log*
+service-account*.json
+.env
+.claude/

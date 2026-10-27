@@ -1,0 +1,20 @@
+{
+  "name": "family-emergency",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/logic.test.js tests/sw.test.js worker/test/worker.test.js",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-family \"node --test tests/rules.test.js\"",
+    "serve": "node tools/serve.js"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.0.0",
+    "firebase-tools": "^15.33.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.6",
+    "uuid": "^11.1.1",
+    "@opentelemetry/core": "^2.8.0"
+  }
+}

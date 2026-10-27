@@ -1,0 +1,43 @@
+name: GitHub Pages 배포
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 버전 표시 (서비스 워커가 새 버전을 받도록)
+        run: |
+          mkdir -p _site
+          cp -r web/. _site/
+          BUILD="${GITHUB_SHA::8}"
+          sed -i "s/const BUILD = 'dev';/const BUILD = '${BUILD}';/" _site/sw.js
+          sed -i "s/data-build=\"dev\"/data-build=\"${BUILD}\"/" _site/index.html
+          grep -q "const BUILD = '${BUILD}'" _site/sw.js
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
