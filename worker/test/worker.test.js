@@ -226,6 +226,13 @@ test('테스트 알람은 관리자만, 테스트마다 한 번만 보낸다', a
   const again = await post('/drill', { token: admin, body: { id: 't1' } });
   assert.equal(again.data.sent, 0);
   assert.equal(calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/')).length, 0);
+
+  // 받을 사람을 골랐으면 그 사람의 기기에만 보낸다
+  db['alarmTests/t2'] = { by: 'user-2', byName: '아빠', message: '훈련', targets: ['someone-else'] };
+  calls = [];
+  assert.equal((await post('/drill', { token: admin, body: { id: 't2' } })).data.sent, 0);
+  db['alarmTests/t3'] = { by: 'user-2', byName: '아빠', message: '훈련', targets: ['user-1'] };
+  assert.equal((await post('/drill', { token: admin, body: { id: 't3' } })).data.sent, 1);
 });
 
 test('예전 방식(세대가 다른) 계정은 Worker를 쓸 수 없다', async () => {

@@ -361,12 +361,13 @@ service cloud.firestore {
     }
 
     // ---------- 테스트 알람 ----------
-    // 관리자가 보내면 가족 모두의 휴대폰에서 "테스트" 경보가 울린다. 실제 경보 상태와는 무관하다.
+    // 관리자가 보내면 고른 가족(targets, 없으면 모두)의 휴대폰에서 "테스트" 경보가 울린다. 실제 경보 상태와는 무관하다.
     // 각자 확인을 누르면 acks/{본인 uid} 가 남고, 누가 확인했는지는 관리자만 본다.
     match /alarmTests/{id} {
       allow read: if isMember();
       allow create: if isAdmin()
-        && request.resource.data.keys().hasOnly(['by', 'byName', 'at', 'message', 'sound'])
+        && request.resource.data.keys().hasOnly(['by', 'byName', 'at', 'message', 'sound', 'targets'])
+        && (!('targets' in request.resource.data) || (request.resource.data.targets is list && request.resource.data.targets.size() <= 25))
         && request.resource.data.by == request.auth.uid
         && str(request.resource.data.byName, 40)
         && optStr(request.resource.data, 'message', 200)

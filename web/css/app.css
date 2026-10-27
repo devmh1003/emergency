@@ -792,19 +792,21 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
   inset: 0;
   z-index: 200;
   display: grid;
-  /* 긴 메시지·큰 글자에서도 확인 버튼까지 스크롤해서 누를 수 있게 */
+  /* 화면 전체를 덮고 내용은 정중앙. 긴 메시지·큰 글자에서도 확인 버튼까지 스크롤해서 누를 수 있게 */
   place-items: safe center;
+  min-height: 100dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 1.5rem;
-  background: rgb(51 25 10 / 96%);
+  padding: max(1.5rem, env(safe-area-inset-top)) 1.5rem max(1.5rem, env(safe-area-inset-bottom));
+  background: rgb(51 25 10 / 98%);
   color: #fff;
 }
 
-.alarm-box { max-width: 28rem; width: 100%; text-align: center; display: flex; flex-direction: column; gap: 0.875rem; }
+.alarm-box { max-width: 30rem; width: 100%; margin: auto; text-align: center; display: flex; flex-direction: column; align-items: stretch; gap: 1rem; }
+.alarm-box > p { font-size: 1.125rem; margin: 0; }
 .alarm-label { letter-spacing: 0.2em; font-weight: 800; font-size: 0.875rem; color: var(--gold); }
-.alarm-icon { font-size: 4rem; animation: shake 0.5s ease-in-out infinite; }
-.alarm h2 { font-size: 1.75rem; margin: 0; color: #fff; }
+.alarm-icon { font-size: 5rem; line-height: 1; animation: shake 0.5s ease-in-out infinite; }
+.alarm h2 { font-size: 2rem; line-height: 1.25; margin: 0; color: #fff; }
 .alarm-message { background: rgb(255 255 255 / 12%); border-left: 0.375rem solid var(--gold); text-align: left; padding: 0.875rem 1rem; font-size: 1.0625rem; }
 
 .alarm-alert { background: rgb(60 45 5 / 96%); }
@@ -872,10 +874,12 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
 
 /* ---------- 알림 메시지(토스트) ---------- */
 
+/* 알림 메시지는 화면 정중앙에 잠깐 뜬다 */
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--nav-h) + 1rem + env(safe-area-inset-bottom));
+  top: 50%;
+  text-align: center;
   z-index: 250;
   width: min(92vw, 32rem);
   padding: 0.875rem 1rem;
@@ -885,14 +889,35 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
   color: #fff;
   font-weight: 600;
   box-shadow: var(--shadow-2);
-  transform: translate(-50%, 1rem);
+  transform: translate(-50%, -50%) scale(0.96);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s, transform 0.2s;
 }
 
-@media (min-width: 64em) { .toast { bottom: 1.5rem; } }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+/* 확인 창: 브라우저 기본 confirm 대신 화면 정중앙 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background: rgb(0 0 0 / 55%);
+}
+.modal-box {
+  width: min(100%, 26rem);
+  padding: 1.5rem 1.25rem 1.25rem;
+  border-radius: calc(var(--radius) * 3);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-2);
+  text-align: center;
+}
+.modal-message { margin: 0 0 1.25rem; font-size: 1.125rem; font-weight: 600; line-height: 1.5; }
+.modal-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.625rem; }
 .toast.error { border-left-color: var(--secondary); }
 .toast.warn { border-left-color: var(--warning); }
 

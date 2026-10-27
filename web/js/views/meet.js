@@ -1,5 +1,5 @@
 // 집합장소: 진행 단계, 지금 갈 곳과 남은 시간, 거리·방향(오프라인), 1~10순위 일정, 지도, 집합장소 게시판
-import { h, toast, busy, panel, pageHeader, empty, field, select, alertBox, table } from '../dom.js';
+import { h, toast, busy, panel, pageHeader, empty, field, select, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { t } from '../i18n.js';
 import { addMeetingLog, watchMeetingLogs, deleteMeetingLog } from '../store.js';
@@ -155,7 +155,7 @@ function logSection(state) {
         state.isAdmin || l.uid === state.me.id ? h('button', {
           class: 'btn btn-sm btn-outline-secondary',
           onClick: async () => {
-            if (!confirm(t('이 기록을 지울까요?'))) return;
+            if (!(await ask(t('이 기록을 지울까요?')))) return;
             try { await deleteMeetingLog(l.id); } catch (err) { toast(errorMessage(err), 'error'); }
           },
         }, t('삭제')) : null))))

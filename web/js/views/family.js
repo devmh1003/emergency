@@ -1,6 +1,6 @@
 // 가족 현황, 마지막 위치 지도, 가족 상세
 // 관리자는 가족 전체를, 일반 가족은 본인과 관리자가 지정한 최대 3명만 본다 (서버 규칙이 강제한다).
-import { h, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
+import { h, toast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   getProfile, getChecklist, watchCheckins, updateMember, deleteMember, deleteCheckin,
@@ -175,7 +175,7 @@ export function memberDetailView({ state, params, live, navigate }) {
         state.isAdmin ? h('button', {
           class: 'btn btn-sm btn-outline-secondary',
           onClick: async () => {
-            if (!confirm(t('이 기록을 지울까요? (관리 기록에 남습니다)'))) return;
+            if (!(await ask(t('이 기록을 지울까요? (관리 기록에 남습니다)')))) return;
             try { await deleteCheckin(c); } catch (err) { toast(errorMessage(err), 'error'); }
           },
         }, t('삭제')) : '',
@@ -238,10 +238,11 @@ function adminActions(state, m, navigate) {
     }, m.active ? t('⏸ 접근 차단') : t('▶ 다시 활성화')) : null,
     !isSelf ? h('button', {
       class: 'btn btn-secondary',
-      onClick: (e) => {
+      onClick: async (e) => {
+        const target = e.currentTarget;
         if (m.role === 'admin' && admins.length <= 1) { toast(t('마지막 관리자는 삭제할 수 없습니다.'), 'error'); return; }
-        if (!confirm(t('{name}님을 삭제할까요? 개인정보와 로그인 계정이 지워집니다. (신고 기록은 남습니다)', { name: m.name }))) return;
-        busy(e.currentTarget, async () => {
+        if (!(await ask(t('{name}님을 삭제할까요? 개인정보와 로그인 계정이 지워집니다. (신고 기록은 남습니다)', { name: m.name })))) return;
+        busy(target, async () => {
           try {
             const r = await deleteMember(m.id, m.name, m.role);
             toast(r.accountDeleted ? t('삭제했습니다.') : t('삭제했습니다. 로그인 계정은 Firebase 콘솔에서 지워 주세요 ({error}).', { error: r.error }), r.accountDeleted ? 'info' : 'warn');

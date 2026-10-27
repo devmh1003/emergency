@@ -1,13 +1,14 @@
 // 설정: 알림, 앱 설치, 글자 크기, 내 정보, 접속 코드 관리(관리자), 내 기록, 인쇄용 비상카드
 import {
   h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, isIOS, isStandalone,
-  FONT_SCALES, savedFontScale, applyFontScale,
+  FONT_SCALES, savedFontScale, applyFontScale, ask,
 } from '../dom.js';
 import { config, logout, errorMessage, callWorker } from '../firebase.js';
 import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, deleteLegacyMembers } from '../store.js';
 import { enablePush, pushStatus, disablePush } from '../push.js';
 import { mapView } from '../map.js';
 import { previewAlarm } from './emergency.js';
+import { standbyWanted, standbyActive, startStandby, stopStandby } from '../siren.js';
 import { offlineStatus, prepareOffline } from '../offline.js';
 import { t } from '../i18n.js';
 import {
@@ -168,12 +169,12 @@ function accessCodePanel(state) {
       h('div', { class: 'row' },
         h('button', { class: 'btn btn-outline btn-sm', type: 'button', onClick: () => { form.hidden = true; form.reset(); } }, t('취소')),
         h('button', { class: 'btn btn-sm', type: 'submit' }, t('바꾸기'))));
-    form.addEventListener('submit', (e) => {
+    form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const { code } = formData(form);
       const problem = accessCodeProblem(code, kind);
       if (problem) { toast(problem, 'error'); return; }
-      if (!confirm(t('{label}를 바꿀까요? 예전 코드로는 더 이상 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로입니다.', { label: codeLabel(kind) }))) return;
+      if (!(await ask(t('{label}를 바꿀까요? 예전 코드로는 더 이상 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로입니다.', { label: codeLabel(kind) })))) return;
       busy(form.querySelector('button[type=submit]'), async () => {
         try {
           await changeAccessCode(kind, code);
@@ -197,7 +198,7 @@ function accessCodePanel(state) {
       h('button', {
         class: 'btn btn-sm btn-outline',
         onClick: (e) => busy(e.currentTarget, async () => {
-          if (!confirm(t('예전 방식 계정 문서를 정리할까요?'))) return;
+          if (!(await ask(t('예전 방식 계정 문서를 정리할까요?')))) return;
           try {
             await deleteLegacyMembers(state.legacyMembers);
             toast(t('정리했습니다.'));
@@ -227,6 +228,7 @@ export function settingsView({ state }) {
         ['#/contacts', '☎️', t('비상 연락처'), t('공공 번호와 가족 연락처')]].map(([href, icon, title, desc]) => h('a', { class: 'tile', href },
         h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))),
     h('div', { class: 'grid grid-2' }, pushPanel(state), installPanel()),
+    standbyPanel(),
     offlinePanel(state),
     fontPanel(),
     myInfoPanel(state),
@@ -236,11 +238,52 @@ export function settingsView({ state }) {
       h('button', {
         class: 'btn btn-outline-secondary',
         onClick: async () => {
-          if (!confirm(t('로그아웃할까요? 이 휴대폰으로 비상 알림이 오지 않게 됩니다.'))) return;
+          if (!(await ask(t('로그아웃할까요? 이 휴대폰으로 비상 알림이 오지 않게 됩니다.')))) return;
           await disablePush();
           await logout();
         },
       }, t('로그아웃'))));
+}
+
+// ---------- 경보 대기 모드 ----------
+// 웹 앱은 완전히 닫혀 있으면 소리를 낼 수 없다. 대기 모드는 무음을 계속 재생해 화면이 꺼져도 앱이 잠들지 않게 하고,
+// 1급 경보가 오면 그 자리에서 경보음으로 바꾼다. 앱을 닫아 둘 때를 위해 휴대폰 알림 소리를 경보음으로 바꾸는 방법도 안내한다.
+
+export function standbyPanel() {
+  const statusBox = h('div');
+  const button = h('button', { class: 'btn' });
+  const draw = () => {
+    const on = standbyActive();
+    statusBox.replaceChildren(on
+      ? alertBox('success', null, h('p', null, t('켜짐 — 이 앱을 닫지만 않으면 화면이 꺼져 있어도 1급 경보음이 울립니다.')))
+      : standbyWanted()
+        ? alertBox('warning', null, h('p', null, t('대기 준비 중 — 화면을 한 번 누르면 켜집니다.')))
+        : alertBox('warning', null, h('p', null, t('꺼짐 — 화면이 꺼져 있으면 경보음이 울리지 않을 수 있습니다.'))));
+    button.textContent = on ? t('대기 모드 끄기') : t('🛡 대기 모드 켜기');
+    button.className = on ? 'btn btn-outline' : 'btn';
+  };
+  button.addEventListener('click', async () => {
+    if (standbyActive()) stopStandby();
+    else if (!(await startStandby())) toast(t('대기 모드를 켜지 못했습니다. 화면을 한 번 누른 뒤 다시 시도하세요.'), 'error');
+    draw();
+  });
+  draw();
+  return panel(t('🛡 경보 대기 모드 (화면이 꺼져도 경보음)'), null,
+    statusBox,
+    h('div', { class: 'row', style: { marginTop: '0.75rem' } },
+      button,
+      h('button', { class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 경보음 듣기'))),
+    h('ul', { class: 'small', style: { margin: '0.75rem 0 0', paddingLeft: '1.125rem' } },
+      h('li', null, t('대기 모드를 켜고 앱을 열어 둔 채 화면을 끄면, 1급 비상이 선언될 때 경보음이 울립니다. 잠금 화면에 "경보 대기 중"이 보이면 정상입니다.')),
+      h('li', null, t('앱을 완전히 닫거나 휴대폰이 앱을 정리하면 울리지 않습니다. 그때는 휴대폰 알림만 옵니다. 배터리를 조금 더 씁니다.')),
+      h('li', null, t('아이폰은 화면이 꺼지면 대기 모드가 멈출 수 있습니다. 비상 시기에는 앱을 열어 두고 충전기에 꽂아 두세요.'))),
+    h('h3', { class: 'panel-subhead', style: { marginTop: '1rem' } }, t('앱을 닫아 두었을 때: 알림 소리를 경보음으로 (안드로이드)')),
+    h('ol', { class: 'small', style: { margin: 0, paddingLeft: '1.25rem' } },
+      h('li', null, t('아래 버튼으로 경보음 파일을 휴대폰에 받습니다.'), ' ',
+        h('a', { class: 'btn btn-sm btn-outline', href: './sounds/siren.wav', download: 'family-siren.wav' }, t('⬇ 경보음 받기'))),
+      h('li', null, t('휴대폰 설정 → 애플리케이션 → "우리 가족 비상연락"(홈 화면에 설치했을 때) 또는 Chrome → 알림으로 들어갑니다.')),
+      h('li', null, t('알림 항목에서 소리를 받은 파일로 바꾸고, "방해 금지 모드 무시"가 있으면 켭니다.'))),
+    h('p', { class: 'muted small', style: { marginTop: '0.5rem' } }, t('아이폰은 웹 앱의 알림 소리를 바꿀 수 없습니다.')));
 }
 
 // ---------- 내 기록 ----------

@@ -1,5 +1,5 @@
 // 비상 경보 화면(2급 → 1급), 빠른 선언, 전체 화면 경보, 테스트 알람
-import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
+import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
 import { errorMessage, callWorker } from '../firebase.js';
 import { t } from '../i18n.js';
 import {
@@ -48,7 +48,12 @@ function closeOverlay(el) {
 
 function showOverlay({ kind, key, variant, sound, label, icon, title, lines = [], message, confirmText, onConfirm, autoStopMs }) {
   closeOverlay(document.getElementById('alarm'));
-  const playing = sound ? startSiren() : true;
+  const soundButton = sound ? h('button', {
+    class: 'btn btn-lg alarm-sound-btn',
+    onClick: () => startSiren().then((ok) => { soundButton.hidden = ok; }),
+  }, t('🔊 경보음 켜기')) : null;
+  if (soundButton) soundButton.hidden = true;
+  if (sound) startSiren().then((ok) => { soundButton.hidden = ok; });
   if (sound && autoStopMs) autoStopTimer = setTimeout(stopSiren, autoStopMs);
   const overlay = h('div', {
     id: 'alarm', class: `alarm alarm-${variant}`, role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'alarm-title',
@@ -60,7 +65,7 @@ function showOverlay({ kind, key, variant, sound, label, icon, title, lines = []
     h('h2', { id: 'alarm-title' }, title),
     lines.map((l) => h('p', null, l)),
     message ? h('p', { class: 'alarm-message' }, message) : null,
-    playing ? null : h('button', { class: 'btn btn-lg alarm-sound-btn', onClick: () => startSiren() }, t('🔊 경보음 켜기')),
+    soundButton,
     h('button', {
       class: 'btn btn-safe btn-lg btn-block',
       onClick: () => {
@@ -123,6 +128,8 @@ export function maybeAlarm(state) {
 export async function maybeTestAlarm(state, test) {
   const uid = state.me?.id;
   if (!uid || !test || !isFreshAlarmTest(test) || test.by === uid) return;
+  // 받을 사람을 골라 보낸 테스트면 그 사람에게만 뜬다
+  if (Array.isArray(test.targets) && !test.targets.includes(uid)) return;
   if (readLocal(testAckStorageKey(uid)) === test.id) return;
   // 실제 경보가 떠 있으면 테스트는 띄우지 않는다.
   if (document.getElementById('alarm')) return;
@@ -228,7 +235,7 @@ export function emergencyView({ state, onChange, navigate }) {
   drawLogs();
   const unsubs = [watchEmergencyLog((list) => { logs = list; drawLogs(); }, () => {})];
 
-  const testBox = testPanel(state, unsubs);
+  const testBox = testPanel(state, unsubs, onChange);
   window.addEventListener('hashchange', () => unsubs.forEach((u) => u()), { once: true });
 
   return h('div', { class: 'page' },
@@ -267,9 +274,10 @@ function sinceText(at) {
 function endButton(state) {
   return h('button', {
     class: 'btn btn-lg',
-    onClick: (ev) => {
-      if (!confirm(t('경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.'))) return;
-      busy(ev.currentTarget, async () => {
+    onClick: async (ev) => {
+      const target = ev.currentTarget;
+      if (!(await ask(t('경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.')))) return;
+      busy(target, async () => {
         try {
           const r = await endEmergency(state.me);
           toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
@@ -285,9 +293,10 @@ function endButton(state) {
 function escalateButton(state) {
   return h('button', {
     class: 'btn btn-secondary btn-lg',
-    onClick: (ev) => {
-      if (!confirm(t('1급으로 격상할까요? 가족 모두에게 경보음과 알림이 가고, 지금부터 집합 시간이 계산됩니다.'))) return;
-      busy(ev.currentTarget, async () => {
+    onClick: async (ev) => {
+      const target = ev.currentTarget;
+      if (!(await ask(t('1급으로 격상할까요? 가족 모두에게 경보음과 알림이 가고, 지금부터 집합 시간이 계산됩니다.')))) return;
+      busy(target, async () => {
         try {
           const r = await escalateEmergency(state.me, state.emergency, '');
           toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
@@ -334,13 +343,13 @@ function alertActiveCard(state) {
     field(t('가족에게 보낼 메시지 (선택)'), h('textarea', { name: 'message', rows: 3, maxlength: 500, placeholder: t('예: 1급 비상입니다. 지금 바로 1순위 집합장소로 이동하세요.') }),
       t('비워 두면 2급 때 메시지를 그대로 씁니다.')),
     h('button', { class: 'btn btn-secondary btn-lg btn-block', type: 'submit', disabled: !canEscalate }, t('🚨 1급으로 격상')));
-  form.addEventListener('submit', (ev) => {
+  form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const { message } = formData(form);
     const warn = state.isAdmin
       ? t('1급으로 격상할까요? 가족 모두에게 경보음과 알림이 가고, 지금부터 집합 시간이 계산됩니다.')
       : t('1급으로 격상할까요? 가족 모두에게 경보음과 알림이 가고, 내 선언권 1회를 씁니다.');
-    if (!confirm(warn)) return;
+    if (!(await ask(warn))) return;
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
         const r = await escalateEmergency(me, e, message);
@@ -390,12 +399,13 @@ export function quickDeclarePanel(state) {
     return h('button', {
       type: 'button',
       class: `quick-btn quick-${level}`,
-      onClick: (ev) => {
+      onClick: async (ev) => {
+        const target = ev.currentTarget;
         const warn = level === 'real'
           ? t('1급 비상({type})을 선언할까요? 가족 모두에게 경보음과 알림이 갑니다.', { type: name })
           : t('2급 비상({type})을 발령할까요? 가족 모두에게 알림이 갑니다 (경보음 없음).', { type: name });
-        if (!confirm(warn)) return;
-        busy(ev.currentTarget, async () => {
+        if (!(await ask(warn, { danger: level === 'real' }))) return;
+        busy(target, async () => {
           try {
             const r = await declareEmergency(state.me, { level, type, message: '' });
             if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
@@ -441,7 +451,7 @@ function declareCard(state, navigate) {
     submit.textContent = real ? t('🚨 1급 비상 선언') : t('⚠️ 2급 비상 발령');
   });
 
-  form.addEventListener('submit', (ev) => {
+  form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const data = formData(form);
     const real = data.level === 'real';
@@ -455,7 +465,7 @@ function declareCard(state, navigate) {
         ? t('1급 비상을 선언할까요? 가족 모두에게 경보음과 알림이 가고, 내 선언권 1회를 씁니다.')
         : t('2급 비상을 발령할까요? 가족 모두에게 알림이 가고(경보음 없음), 내 선언권 1회를 씁니다.');
     }
-    if (!confirm(warn)) return;
+    if (!(await ask(warn))) return;
     busy(submit, async () => {
       try {
         const r = await declareEmergency(me, data);
@@ -478,27 +488,68 @@ function declareCard(state, navigate) {
 
 // ---------- 테스트 알람 ----------
 
-export function testPanel(state, unsubs) {
+export function testPanel(state, unsubs, onChange) {
   const local = h('div', { class: 'stack' },
     h('p', null, t('이 휴대폰에서만 시험합니다. 가족에게는 아무 알림도 가지 않습니다.')),
     h('div', { class: 'row' },
       h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 1급 경보음 듣기')),
       h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('alert') }, t('⚠️ 2급 화면 보기 (소리 없음)')),
       h('button', { type: 'button', class: 'btn btn-outline', onClick: (ev) => busy(ev.currentTarget, sendMyTestPush) }, t('🔔 내 휴대폰에 테스트 알림'))),
-    h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다. 테스트 알림은 알림을 켠 내 기기로만 갑니다.')));
+    h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다. 테스트 알림은 알림을 켠 내 기기로만 갑니다.'), ' ',
+      h('a', { href: '#/settings' }, t('화면이 꺼져도 울리게: 설정 → 경보 대기 모드 →'))));
   if (!state.isAdmin) return panel(t('🔊 소리·알림 테스트'), null, local);
 
+  // 받을 사람 (기본: 나를 뺀 가족 모두). 가족 목록이 바뀌면 다시 그리고, 고른 상태는 유지한다.
+  const people = () => state.members.filter((m) => m.active && m.id !== state.me.id);
+  const unchecked = new Set();
+  let boxes = [];
+  let shownPeople = null;
+  const pickerBox = h('div');
+  const sendButton = h('button', { class: 'btn btn-lg btn-block', type: 'submit' }, t('🔔 테스트 알람 보내기'));
+  const pickAll = (on) => {
+    for (const b of boxes) {
+      b.checked = on;
+      if (on) unchecked.delete(b.value); else unchecked.add(b.value);
+    }
+  };
+  const drawPicker = () => {
+    const list = people();
+    const key = list.map((m) => `${m.id}:${m.name}`).join('|');
+    if (key === shownPeople) return;
+    shownPeople = key;
+    boxes = list.map((m) => h('input', {
+      type: 'checkbox', value: m.id, checked: !unchecked.has(m.id),
+      onChange: (e) => { if (e.currentTarget.checked) unchecked.delete(m.id); else unchecked.add(m.id); },
+    }));
+    sendButton.disabled = !list.length;
+    pickerBox.replaceChildren(list.length
+      ? h('fieldset', { class: 'choice-group' },
+        h('legend', null, t('받을 사람')),
+        h('div', { class: 'row', style: { gap: '0.5rem' } },
+          h('button', { type: 'button', class: 'btn btn-sm btn-outline', onClick: () => pickAll(true) }, t('모두 선택')),
+          h('button', { type: 'button', class: 'btn btn-sm btn-outline', onClick: () => pickAll(false) }, t('모두 해제'))),
+        h('div', { class: 'grid grid-3', style: { gap: '0.25rem 1rem' } },
+          list.map((m, i) => h('label', { class: 'check' }, boxes[i], h('span', null, m.name)))))
+      : alertBox('info', null, h('p', null, t('테스트 알람을 받을 다른 가족이 없습니다. 가족을 먼저 등록하세요.'))));
+  };
+  drawPicker();
+  onChange?.(drawPicker);
   const form = h('form', { class: 'stack' },
+    pickerBox,
     field(t('소리'), select('sound', [{ value: 'real', label: SOUND_LABEL.real }, { value: 'alert', label: SOUND_LABEL.alert }], 'real')),
     field(t('메시지'), h('input', { name: 'message', maxlength: 200, value: t('테스트 알람입니다. 확인을 눌러 주세요.') })),
-    h('button', { class: 'btn btn-lg btn-block', type: 'submit' }, t('🔔 가족 전체 테스트 알람 보내기')));
-  form.addEventListener('submit', (ev) => {
+    sendButton);
+  form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const data = formData(form);
-    if (!confirm(t('가족 모두의 휴대폰에서 "테스트" 경보가 울립니다. 보낼까요?'))) return;
+    const chosen = people().filter((m) => !unchecked.has(m.id));
+    const targets = chosen.map((m) => m.id);
+    if (!targets.length) { toast(t('받을 사람을 한 명 이상 고르세요.'), 'error'); return; }
+    const names = chosen.map((m) => m.name).join(', ');
+    if (!(await ask(t('{names}님의 휴대폰에서 "테스트" 경보가 울립니다. 보낼까요?', { names })))) return;
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        const r = await sendAlarmTest(state.me, data);
+        const r = await sendAlarmTest(state.me, { ...data, targets });
         toast(r.error
           ? t('테스트 알람을 보냈습니다. 사이트를 열어 둔 휴대폰에서 울립니다. (푸시 알림: {error})', { error: r.error })
           : t('테스트 알람을 보냈습니다. 푸시 알림 {n}건 발송.', { n: r.sent ?? 0 }));
@@ -513,7 +564,7 @@ export function testPanel(state, unsubs) {
   let shownTestId = null;
   const showResult = (test, acks) => {
     const ackById = new Map(acks.map((a) => [a.id, a]));
-    const family = state.members.filter((m) => m.active);
+    const family = state.members.filter((m) => m.active && (!Array.isArray(test.targets) || test.targets.includes(m.id) || m.id === test.by));
     const done = family.filter((m) => ackById.has(m.id) || m.id === test.by).length;
     resultBox.replaceChildren(
       h('p', null, h('strong', null, t('마지막 테스트: {time}', { time: formatDateTime(test.at) })), ` · ${test.byName} · ${SOUND_LABEL[test.sound] || SOUND_LABEL.real}`),
@@ -542,8 +593,8 @@ export function testPanel(state, unsubs) {
   return panel(t('🔊 소리·알림 테스트'), null,
     h('h3', { class: 'panel-subhead' }, t('이 휴대폰에서 듣기')),
     local,
-    h('h3', { class: 'panel-subhead' }, t('가족 전체 테스트 알람')),
-    h('p', null, t('가족 모두의 휴대폰에서 "테스트" 표시와 함께 경보가 울립니다. 각자 확인을 누르면 아래 표에 표시됩니다. 실제 경보 상태는 바뀌지 않습니다.')),
+    h('h3', { class: 'panel-subhead' }, t('가족 테스트 알람')),
+    h('p', null, t('고른 가족의 휴대폰에서 "테스트" 표시와 함께 경보가 울립니다. 각자 확인을 누르면 아래 표에 표시됩니다. 실제 경보 상태는 바뀌지 않습니다.')),
     form,
     resultBox);
 }

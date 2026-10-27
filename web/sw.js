@@ -15,6 +15,8 @@ const APP_FILES = [
   'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',
+  'sounds/siren.wav',
+  'sounds/silence.wav',
   'js/config.js',
   'js/app.js',
   'js/dom.js',

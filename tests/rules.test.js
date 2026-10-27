@@ -295,6 +295,10 @@ test('테스트 알람은 관리자만 보내고, 가족은 본인 확인만 남
   await assertFails(setDoc(doc(as('mom'), 'alarmTests/t0'), testDoc('mom', '엄마')));
   await assertFails(setDoc(doc(as('admin'), 'alarmTests/t0'), testDoc('admin', '아빠', { sound: 'loud' })));
   await assertSucceeds(setDoc(doc(as('admin'), 'alarmTests/t1'), testDoc('admin', '아빠')));
+  // 받을 사람 고르기: uid 목록만 (최대 25명)
+  await assertSucceeds(setDoc(doc(as('admin'), 'alarmTests/t2'), testDoc('admin', '아빠', { targets: ['mom'] })));
+  await assertFails(setDoc(doc(as('admin'), 'alarmTests/t3'), testDoc('admin', '아빠', { targets: 'mom' })));
+  await assertFails(setDoc(doc(as('admin'), 'alarmTests/t4'), testDoc('admin', '아빠', { targets: Array.from({ length: 26 }, (_, i) => `u${i}`) })));
   await assertFails(updateDoc(doc(as('admin'), 'alarmTests/t1'), { message: '바꿈' }));
   await assertSucceeds(getDoc(doc(as('kid'), 'alarmTests/t1')));
   await assertFails(getDoc(doc(as('stranger'), 'alarmTests/t1')));

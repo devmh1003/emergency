@@ -1,5 +1,5 @@
 // 비상 연락처: 공공 비상 번호(내장), 볼 수 있는 가족, 가족 지정 연락처(관리자가 관리), 유용한 사이트
-import { h, field, formData, toast, busy, panel, pageHeader, empty, table } from '../dom.js';
+import { h, field, formData, toast, busy, panel, pageHeader, empty, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { saveContact, deleteContact } from '../store.js';
 import { cleanPhone } from '../logic.js';
@@ -85,7 +85,7 @@ export function contactsView({ state, live }) {
             state.isAdmin ? h('button', {
               class: 'btn btn-sm btn-outline-secondary',
               onClick: async () => {
-                if (!confirm(t('"{name}" 연락처를 지울까요?', { name: c.name }))) return;
+                if (!(await ask(t('"{name}" 연락처를 지울까요?', { name: c.name })))) return;
                 try { await deleteContact(c.id, c.name); } catch (err) { toast(errorMessage(err), 'error'); }
               },
             }, t('삭제')) : null),

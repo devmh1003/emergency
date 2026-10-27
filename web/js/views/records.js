@@ -1,5 +1,5 @@
 // 관리자 전용: 모든 기록 한눈에(비상·알림·생존신고·집합·관리 작업), 가족 정보 한눈에
-import { h, field, select, panel, pageHeader, empty, alertBox, table, downloadText } from '../dom.js';
+import { h, field, select, panel, pageHeader, empty, alertBox, table, downloadText, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   watchAuditLog, watchAllCheckins, watchAllEmergencyLog, watchAllMeetingLogs, watchAlarmTests, listCollection,
@@ -158,8 +158,8 @@ export function directoryView({ state, live }) {
 
   const exportBtn = h('button', {
     class: 'btn btn-outline',
-    onClick: () => {
-      if (!confirm(t('가족 개인정보가 담긴 파일을 내려받습니다. 파일은 안전한 곳에 보관하고, 다 쓰면 지우세요.'))) return;
+    onClick: async () => {
+      if (!(await ask(t('가족 개인정보가 담긴 파일을 내려받습니다. 파일은 안전한 곳에 보관하고, 다 쓰면 지우세요.')))) return;
       const csv = toCsv([t('이름'), t('권한'), t('접근'), t('전화'), t('성별'), t('생년월일'), t('나이'), t('혈액형'), t('의료 메모'), t('비상연락처'), t('주소'), t('이메일'), t('대비율'), t('볼 수 있는 가족')],
         rows().map(({ m, p, age, prog }) => [m.name, m.role === 'admin' ? t('관리자') : t('가족'), m.active ? t('허용') : t('차단'), m.phone, p.gender ? t(p.gender) : '',
           p.birthDate || '', age ?? '', p.bloodType ? t(p.bloodType) : '', p.medical || '', p.emergencyContact || '', p.address || '', p.email || '', `${prog.percent}%`,

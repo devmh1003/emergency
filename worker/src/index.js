@@ -261,7 +261,10 @@ async function handleDrill(env, fs, accessToken, caller, body) {
   const claimed = await fs.setString(`alarmTests/${id}`, 'notifiedKey', 'sent', test.updateTime);
   if (!claimed) return { sent: 0, skipped: '다른 요청이 이미 보내는 중입니다' };
   const active = new Set((await fs.list('members')).filter((m) => m.active === true).map((m) => m.id));
-  const tokens = (await fs.list('pushTokens')).filter((t) => active.has(t.uid) && t.uid !== caller.uid);
+  // 받을 사람을 골랐으면 그 사람들에게만
+  const targets = Array.isArray(test.targets) ? new Set(test.targets) : null;
+  const tokens = (await fs.list('pushTokens'))
+    .filter((t) => active.has(t.uid) && t.uid !== caller.uid && (!targets || targets.has(t.uid)));
   const result = await sendToTokens(env, fs, accessToken, tokens, {
     kind: 'test',
     urgent: test.sound !== 'alert',

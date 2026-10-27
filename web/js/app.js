@@ -8,6 +8,7 @@ import { maybeAutoPrepare, prepareOffline } from './offline.js';
 import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel } from './logic.js';
 import * as store from './store.js';
 import { refreshPushToken } from './push.js';
+import { standbyWanted, startStandby } from './siren.js';
 import {
   configNeededView, loginView, setupView, notRegisteredView, loadingView, pickerView, backupView, langToggle,
 } from './views/auth.js';
@@ -490,6 +491,10 @@ function start() {
       location.reload();
     });
     navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('서비스 워커 등록 실패', err));
+  }
+  if (standbyWanted()) {
+    const resume = () => startStandby().then((ok) => { if (ok) document.removeEventListener('pointerdown', resume, true); });
+    document.addEventListener('pointerdown', resume, true);
   }
   window.addEventListener('online', () => { state.online = true; renderChrome(); });
   window.addEventListener('offline', () => { state.online = false; renderChrome(); });

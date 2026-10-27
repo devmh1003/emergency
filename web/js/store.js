@@ -179,11 +179,11 @@ export const watchLatestAlarmTest = (cb, onError) => watchCollection('alarmTests
 export const watchAlarmTests = (cb, onError, max = 100) => watchCollection('alarmTests', cb, onError, orderBy('at', 'desc'), limit(max));
 export const watchAlarmAcks = (testId, cb, onError) => watchCollection(`alarmTests/${testId}/acks`, cb, onError);
 
-/** sound: 'alert'(2급) | 'real'(1급) */
-export async function sendAlarmTest(me, { message, sound }) {
+/** sound: 'alert'(2급) | 'real'(1급), targets: 받을 사람 uid 목록 */
+export async function sendAlarmTest(me, { message, sound, targets }) {
   const testRef = doc(collection(db, 'alarmTests'));
   await setDoc(testRef, {
-    by: me.id, byName: me.name, at: serverTimestamp(), message: message.slice(0, 200), sound,
+    by: me.id, byName: me.name, at: serverTimestamp(), message: message.slice(0, 200), sound, targets: targets.slice(0, 25),
   });
   try {
     return { id: testRef.id, ...(await callWorker('/drill', { id: testRef.id })) };

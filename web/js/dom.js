@@ -62,6 +62,36 @@ export function toast(message, kind = 'info') {
   toastTimer = setTimeout(() => box.classList.remove('show'), kind === 'error' ? 6000 : 3500);
 }
 
+/**
+ * 화면 정중앙에 확인 창을 띄운다 (휴대폰 위쪽에 뜨는 브라우저 기본 confirm 창 대신).
+ * 확인하면 true, 취소·바깥 누름·Esc 면 false.
+ */
+export function ask(message, { ok = t('예'), cancel = t('아니요'), danger = false } = {}) {
+  return new Promise((resolve) => {
+    const before = document.activeElement;
+    const done = (answer) => {
+      dialog.remove();
+      document.removeEventListener('keydown', onKey);
+      before?.focus?.();
+      resolve(answer);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') done(false); };
+    const okButton = h('button', { type: 'button', class: `btn btn-lg ${danger ? 'btn-secondary' : ''}`, onClick: () => done(true) }, ok);
+    const dialog = h('div', {
+      class: 'modal', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-message',
+      onClick: (e) => { if (e.target === dialog) done(false); },
+    },
+    h('div', { class: 'modal-box' },
+      h('p', { id: 'modal-message', class: 'modal-message' }, message),
+      h('div', { class: 'modal-actions' },
+        h('button', { type: 'button', class: 'btn btn-outline btn-lg', onClick: () => done(false) }, cancel),
+        okButton)));
+    document.body.append(dialog);
+    document.addEventListener('keydown', onKey);
+    okButton.focus();
+  });
+}
+
 /** 폼 입력 한 줄 (라벨 + 입력) */
 export function field(label, input, hint) {
   return h('label', { class: 'field' },

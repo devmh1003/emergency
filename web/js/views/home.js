@@ -1,5 +1,5 @@
 // 홈: 현재 상황, "나 무사해요" 생존신고, 바로가기, 가족 현황, 준비 상태, 현재 위치, 긴급 전화
-import { h, toast, busy, card, panel, alertBox, isIOS } from '../dom.js';
+import { h, toast, busy, card, panel, alertBox, isIOS, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { checkIn } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
@@ -122,9 +122,10 @@ export function homeView({ state, live, onChange }) {
     t('나 무사해요'), h('small', null, t('누르면 GPS 위치와 시간이 가족에게 전달됩니다')));
   const helpBtn = h('button', {
     class: 'btn btn-secondary btn-lg',
-    onClick: (e) => {
-      if (!note.value.trim() && !confirm(t('도움 요청으로 신고할까요? 메모에 상황을 적으면 가족이 더 빨리 도울 수 있습니다.'))) return;
-      run('help', e.currentTarget);
+    onClick: async (e) => {
+      const target = e.currentTarget;
+      if (!note.value.trim() && !(await ask(t('도움 요청으로 신고할까요? 메모에 상황을 적으면 가족이 더 빨리 도울 수 있습니다.')))) return;
+      run('help', target);
     },
   }, t('🆘 도움 요청'));
 

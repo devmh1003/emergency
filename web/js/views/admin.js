@@ -1,5 +1,5 @@
 // 관리자 화면: 가족 추가·수정, 집합장소 설정, 대처법 편집
-import { h, field, select, formData, toast, busy, card, panel, pageHeader, empty, alertBox } from '../dom.js';
+import { h, field, select, formData, toast, busy, card, panel, pageHeader, empty, alertBox, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, getProfile, saveMeetingPoint, deleteMeetingPoint,
@@ -193,9 +193,10 @@ export function meetEditView({ state, params, navigate }) {
     h('div', { class: 'row' },
       p.name ? h('button', {
         class: 'btn btn-secondary', type: 'button',
-        onClick: (e) => {
-          if (!confirm(t('{rank}순위 집합장소를 지울까요?', { rank }))) return;
-          busy(e.currentTarget, async () => {
+        onClick: async (e) => {
+          const target = e.currentTarget;
+          if (!(await ask(t('{rank}순위 집합장소를 지울까요?', { rank })))) return;
+          busy(target, async () => {
             try { await deleteMeetingPoint(rank, p.name); toast(t('지웠습니다.')); navigate('/admin/meet'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },
@@ -271,9 +272,10 @@ export function protocolEditView({ state, params, navigate }) {
     h('div', { class: 'row' },
       !isNew ? h('button', {
         class: 'btn btn-secondary', type: 'button',
-        onClick: (e) => {
-          if (!confirm(t('"{title}"을(를) 지울까요?', { title: p.title }))) return;
-          busy(e.currentTarget, async () => {
+        onClick: async (e) => {
+          const target = e.currentTarget;
+          if (!(await ask(t('"{title}"을(를) 지울까요?', { title: p.title })))) return;
+          busy(target, async () => {
             try { await deleteProtocol(p.id, p.title); toast(t('지웠습니다.')); navigate('/admin/protocols'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },

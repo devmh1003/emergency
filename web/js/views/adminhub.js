@@ -76,7 +76,7 @@ const SHORTCUTS = [
   ['#/print', '🖨', '인쇄용 비상카드', '지갑·배낭에 넣을 종이 카드'],
 ];
 
-export function adminHubView({ state, live }) {
+export function adminHubView({ state, live, onChange }) {
   // 최근 비상 기록 몇 줄만 (전체는 관리자 기록 화면)
   const logBox = h('div', null, h('p', { class: 'muted small' }, t('불러오는 중…')));
   const unsubs = [watchEmergencyLog((list) => {
@@ -85,7 +85,7 @@ export function adminHubView({ state, live }) {
         h('span', { class: 'num muted' }, formatDateTime(l.at)), ' · ', emergencyLogTitle(l), l.byName ? ` · ${l.byName}` : '')))
       : h('p', { class: 'muted small' }, t('기록이 없습니다.')));
   }, () => logBox.replaceChildren(h('p', { class: 'muted small' }, t('기록을 불러오지 못했습니다.'))))];
-  const tests = testPanel(state, unsubs);
+  const tests = testPanel(state, unsubs, onChange);
   window.addEventListener('hashchange', () => unsubs.forEach((u) => u()), { once: true });
 
   return h('div', { class: 'page' },
