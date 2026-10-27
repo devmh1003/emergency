@@ -2,7 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
 import { fromDocument } from '../src/firestore.js';
-import worker, { notificationKey, notificationContent, pickTokens } from '../src/index.js';
+import worker, { notificationKey, notificationContent, pickTokens, pushMessage, alarmAck } from '../src/index.js';
 
 const PROJECT = 'demo-family';
 const enc = new TextEncoder();
@@ -259,4 +259,24 @@ test('관리자는 비밀번호를 초기화할 수 있고, 짧은 비밀번호�
   const ok = await post('/admin/user', { token: admin, body: { action: 'setPassword', uid: 'user-1', password: 'long-enough-pw' } });
   assert.equal(ok.status, 200);
   assert.equal((await post('/admin/user', { token: admin, body: { action: 'delete', uid: 'user-2' } })).status, 400);
+});
+
+test('안드로이드 앱 기기에는 데이터 메시지로 보내고, 확인 키는 사이트 형식과 같다', () => {
+  const at = '2026-10-27T13:07:12.345678Z';
+  const real = { active: true, level: 'real', type: 'earthquake', declaredAt: at, realAt: at, declaredByName: '아빠' };
+  assert.equal(alarmAck(real), `real:${Date.UTC(2026, 9, 27, 13, 7, 12, 345)}`);
+  const app = pushMessage({}, { id: 'tok-app', platform: 'Mozilla/5.0 (Linux; Android 14) FamilyEmergencyApp/1.0' }, notificationContent(real));
+  assert.equal(app.notification, undefined);
+  assert.equal(app.android.priority, 'HIGH');
+  assert.equal(app.data.kind, 'emergency');
+  assert.equal(app.data.level, 'real');
+  assert.equal(app.data.ack, alarmAck(real));
+  assert.ok(Object.values(app.data).every((v) => typeof v === 'string'));
+  // 2급은 앱에서도 보통 알림
+  const alertMsg = pushMessage({}, { id: 'tok-app', platform: 'FamilyEmergencyApp/1.0' }, notificationContent({ ...real, level: 'alert' }));
+  assert.equal(alertMsg.data.level, 'alert');
+  // 웹 브라우저 기기는 그대로 웹 푸시
+  const web = pushMessage({ APP_URL: 'https://example.test/' }, { id: 'tok-web', platform: 'Mozilla/5.0 Chrome' }, notificationContent(real));
+  assert.equal(web.notification.title, notificationContent(real).title);
+  assert.equal(web.webpush.notification.requireInteraction, true);
 });

@@ -3,7 +3,7 @@
 import { getMessaging, getToken, deleteToken, isSupported } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-messaging.js';
 import { app, config } from './firebase.js';
 import { savePushToken, deletePushToken } from './store.js';
-import { isIOS, isStandalone } from './dom.js';
+import { isIOS, isStandalone, nativeApp } from './dom.js';
 import { t } from './i18n.js';
 
 const TOKEN_KEY = 'family.pushToken';
@@ -23,7 +23,12 @@ function storeToken(token) {
   } catch { /* 저장소를 못 쓰는 환경(사생활 보호 모드)은 무시 */ }
 }
 
+function appPermissions() {
+  try { return JSON.parse(nativeApp.permissions()); } catch { return {}; }
+}
+
 export function pushStatus() {
+  if (nativeApp) return appPermissions().notifications && nativeApp.getPushToken() && storedToken() ? 'on' : 'off';
   if (!('Notification' in window)) {
     return isIOS && !isStandalone ? 'ios-needs-install' : 'unsupported';
   }
@@ -44,6 +49,17 @@ async function currentToken() {
 }
 
 export async function enablePush(uid) {
+  if (nativeApp) {
+    if (!appPermissions().notifications) {
+      nativeApp.openPermissions();
+      throw new Error(t('앱 권한 화면에서 알림을 허용한 뒤 다시 누르세요.'));
+    }
+    const token = nativeApp.getPushToken();
+    if (!token) throw new Error(t('알림 등록을 준비하는 중입니다. 잠시 뒤 다시 누르세요.'));
+    await savePushToken(uid, token);
+    storeToken(token);
+    return token;
+  }
   if (!('Notification' in window)) await currentToken(); // 지원하지 않는 이유를 오류로 알려준다
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error(t('알림 권한이 거부됐습니다. 휴대폰 설정에서 이 사이트의 알림을 허용하세요.'));
@@ -56,6 +72,15 @@ export async function enablePush(uid) {
 /** 앱을 열 때마다 토큰을 다시 등록한다 (토큰은 가끔 바뀐다). */
 export async function refreshPushToken(uid) {
   try {
+    if (nativeApp) {
+      const token = nativeApp.getPushToken();
+      if (!token) return;
+      const previous = storedToken();
+      if (previous && previous !== token) await deletePushToken(previous).catch(() => {});
+      await savePushToken(uid, token);
+      storeToken(token);
+      return;
+    }
     if (!('Notification' in window) || Notification.permission !== 'granted' || !config.vapidKey) return;
     const token = await currentToken();
     const previous = storedToken();
@@ -72,6 +97,7 @@ export async function disablePush() {
   const token = storedToken();
   if (!token) return;
   await deletePushToken(token).catch(() => {});
+  if (nativeApp) { storeToken(null); return; }
   try {
     if (await isSupported()) await deleteToken(getMessaging(app));
   } catch { /* 이미 지워진 경우 */ }

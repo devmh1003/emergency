@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "116502180839",
+    "project_id": "emergeny-404ab",
+    "storage_bucket": "emergeny-404ab.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:116502180839:android:b556ce22045c5a846e8342",
+        "android_client_info": {
+          "package_name": "io.github.devmh1003.emergency"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvs_UCopl8mggtYWAmNEYArkcsNLsQK5k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

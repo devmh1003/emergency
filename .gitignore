@@ -7,3 +7,12 @@ firestore-debug.log*
 service-account*.json
 .env
 .claude/
+# 안드로이드 앱 빌드 산출물과 서명 키 (키는 저장소에 넣지 않는다)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+*.jks
+*.keystore
+*.apk

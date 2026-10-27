@@ -1,7 +1,7 @@
 // 설정: 알림, 앱 설치, 글자 크기, 내 정보, 접속 코드 관리(관리자), 내 기록, 인쇄용 비상카드
 import {
   h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, isIOS, isStandalone,
-  FONT_SCALES, savedFontScale, applyFontScale, ask,
+  FONT_SCALES, savedFontScale, applyFontScale, ask, nativeApp, isAndroid, ANDROID_APP_URL,
 } from '../dom.js';
 import { config, logout, errorMessage, callWorker } from '../firebase.js';
 import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, deleteLegacyMembers } from '../store.js';
@@ -75,6 +75,44 @@ function fontPanel() {
   return panel(t('🔠 글자 크기'), null,
     h('div', { class: 'row', role: 'group', 'aria-label': t('글자 크기') }, buttons),
     h('p', { class: 'muted small', style: { marginTop: '0.75rem' } }, t('이 휴대폰에만 적용됩니다.')));
+}
+
+// ---------- 안드로이드 앱 ----------
+
+const APP_PERMISSIONS = [
+  ['notifications', '알림'],
+  ['fullScreen', '전체 화면 알림 (잠금 화면 위 경보)'],
+  ['dnd', '방해 금지 모드 무시'],
+  ['battery', '배터리 최적화 제외'],
+  ['location', '위치'],
+];
+
+/** 앱 안에서: 경보 권한 상태와 권한 화면 열기 */
+function appPanel() {
+  let perms = {};
+  try { perms = JSON.parse(nativeApp.permissions()); } catch { /* 예전 앱 */ }
+  const missing = APP_PERMISSIONS.filter(([k]) => !perms[k]);
+  return panel(t('📱 앱 경보 권한'), null,
+    missing.length
+      ? alertBox('warning', t('꺼진 권한이 있습니다'), h('p', null, t('1급 비상 때 잠금 화면 위 전체 화면 경보가 확실히 뜨도록 모두 켜 주세요.')))
+      : alertBox('success', null, h('p', null, t('모든 권한이 켜져 있습니다. 화면이 꺼져 있거나 앱이 닫혀 있어도 1급 경보가 전체 화면으로 뜹니다.'))),
+    h('ul', { class: 'small', style: { margin: '0.75rem 0', paddingLeft: '1.125rem' } },
+      APP_PERMISSIONS.map(([k, label]) => h('li', null, `${perms[k] ? '✅' : '⚠️'} ${t(label)}`))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn', onClick: () => nativeApp.openPermissions() }, t('권한 설정 열기')),
+      h('button', { class: 'btn btn-outline', onClick: () => nativeApp.testAlarm() }, t('📱 앱 전체 화면 경보 시험'))),
+    h('p', { class: 'muted small', style: { marginTop: '0.5rem' } }, t('앱 버전 {v}', { v: nativeApp.version() })));
+}
+
+/** 안드로이드 휴대폰의 웹 브라우저에서: 앱 받기 안내 */
+function androidAppPanel() {
+  return panel(t('📱 안드로이드 앱 (권장)'), null,
+    h('p', null, t('앱을 설치하면 화면이 꺼져 있거나 앱이 닫혀 있어도, 1급 비상 때 잠금 화면 위에 전체 화면 경보가 뜨고 경보음이 울립니다.')),
+    h('ol', { class: 'small', style: { margin: '0 0 0.75rem', paddingLeft: '1.25rem' } },
+      h('li', null, t('아래 버튼으로 앱 파일을 받고, 받은 파일을 눌러 설치합니다. "출처를 알 수 없는 앱" 허용을 물으면 허용합니다.')),
+      h('li', null, t('앱을 열면 권한 설정 화면이 나옵니다. 모두 켜 주세요.')),
+      h('li', null, t('앱에서 접속 코드를 넣고 이름을 고른 뒤, 설정 → 알림 켜기를 누릅니다.'))),
+    h('a', { class: 'btn', href: ANDROID_APP_URL }, t('⬇ 안드로이드 앱 받기')));
 }
 
 function installPanel() {
@@ -227,8 +265,10 @@ export function settingsView({ state }) {
         ['#/print', '🖨', t('인쇄용 비상카드'), t('종이로 들고 다니기')],
         ['#/contacts', '☎️', t('비상 연락처'), t('공공 번호와 가족 연락처')]].map(([href, icon, title, desc]) => h('a', { class: 'tile', href },
         h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))),
-    h('div', { class: 'grid grid-2' }, pushPanel(state), installPanel()),
-    standbyPanel(),
+    nativeApp ? appPanel() : null,
+    !nativeApp && isAndroid ? androidAppPanel() : null,
+    h('div', { class: 'grid grid-2' }, pushPanel(state), nativeApp ? null : installPanel()),
+    nativeApp ? null : standbyPanel(),
     offlinePanel(state),
     fontPanel(),
     myInfoPanel(state),

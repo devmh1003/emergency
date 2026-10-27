@@ -87,12 +87,22 @@ export function notificationKey(emergency) {
   return emergency.endedAt ? `off:${emergency.endedAt}` : null;
 }
 
+/** 사이트의 alarmKey 와 같은 형식("단계:밀리초"). 앱에서 확인한 경보를 사이트가 다시 띄우지 않는 데 쓴다. */
+export function alarmAck(emergency) {
+  const level = emergencyLevel(emergency);
+  const at = Date.parse(level === 'real' ? (emergency.realAt || emergency.declaredAt) : emergency.declaredAt);
+  return Number.isFinite(at) ? `${level}:${at}` : '';
+}
+
 export function notificationContent(emergency) {
   if (emergency.active) {
     const label = EMERGENCY_LABELS[emergency.type] || '비상 상황';
     if (emergencyLevel(emergency) === 'alert') {
       const who = emergency.declaredByName ? `${emergency.declaredByName}: ` : '';
       return {
+        kind: 'emergency',
+        level: 'alert',
+        ack: alarmAck(emergency),
         title: `⚠️ 2급 비상: ${label}`,
         body: `${who}${emergency.message || '준위험 상황입니다. 생존신고를 하고 비상 배낭과 집합장소를 확인하세요.'}`.slice(0, 300),
         urgent: false,
@@ -101,44 +111,64 @@ export function notificationContent(emergency) {
     const name = emergency.escalatedByName || emergency.declaredByName;
     const who = name ? `${name}: ` : '';
     return {
+      kind: 'emergency',
+      level: 'real',
+      ack: alarmAck(emergency),
       title: `🚨 1급 비상: ${label}`,
       body: `${who}${emergency.message || '지금 바로 생존신고를 하고 집합장소로 이동하세요.'}`.slice(0, 300),
       urgent: true,
     };
   }
   return {
+    kind: 'end',
     title: '✅ 비상 해제',
     body: `${emergency.endedByName || '관리자'}님이 비상을 해제했습니다.`,
     urgent: false,
   };
 }
 
-// urgent(1급): 사용자가 닫을 때까지 화면에 남고 길게 진동한다. 그 밖(2급·해제·테스트 알림)은 보통 알림.
-async function sendPush(env, accessToken, token, { title, body, kind = 'emergency', urgent = false }) {
+/** 우리 안드로이드 앱이 등록한 토큰인가 (앱은 사용자 에이전트에 FamilyEmergencyApp 을 붙인다) */
+export function isAppToken(token) {
+  return String(token?.platform || '').includes('FamilyEmergencyApp');
+}
+
+// 웹 푸시: urgent(1급)는 사용자가 닫을 때까지 화면에 남고 길게 진동한다. 그 밖(2급·해제·테스트 알림)은 보통 알림.
+// 안드로이드 앱: 데이터 메시지로 보내고, 앱이 1급이면 잠금 화면 위 전체 화면 경보를, 그 밖이면 보통 알림을 띄운다.
+export function pushMessage(env, tokenDoc, { title, body, kind = 'emergency', level = '', ack = '', urgent = false }) {
+  const token = tokenDoc.id;
+  if (isAppToken(tokenDoc)) {
+    return {
+      token,
+      data: { kind, level: level || (urgent ? 'real' : 'alert'), title, body, ack },
+      android: { priority: 'HIGH', ttl: '86400s' },
+    };
+  }
   const appUrl = env.APP_URL || '';
+  return {
+    token,
+    notification: { title, body },
+    data: { kind },
+    webpush: {
+      headers: { Urgency: 'high', TTL: '86400' },
+      notification: {
+        title,
+        body,
+        icon: appUrl ? `${appUrl}icons/icon-192.png` : undefined,
+        tag: `family-${kind}`,
+        renotify: true,
+        requireInteraction: urgent,
+        vibrate: urgent ? [600, 300, 600, 300, 600] : [200, 100, 200],
+      },
+      fcm_options: appUrl.startsWith('https://') ? { link: appUrl } : undefined,
+    },
+  };
+}
+
+async function sendPush(env, accessToken, tokenDoc, content) {
   const res = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      message: {
-        token,
-        notification: { title, body },
-        data: { kind },
-        webpush: {
-          headers: { Urgency: 'high', TTL: '86400' },
-          notification: {
-            title,
-            body,
-            icon: appUrl ? `${appUrl}icons/icon-192.png` : undefined,
-            tag: `family-${kind}`,
-            renotify: true,
-            requireInteraction: urgent,
-            vibrate: urgent ? [600, 300, 600, 300, 600] : [200, 100, 200],
-          },
-          fcm_options: appUrl.startsWith('https://') ? { link: appUrl } : undefined,
-        },
-      },
-    }),
+    body: JSON.stringify({ message: pushMessage(env, tokenDoc, content) }),
   });
   if (res.ok) return { ok: true };
   const err = await res.json().catch(() => ({}));
@@ -174,7 +204,7 @@ async function sendToTokens(env, fs, accessToken, tokens, content) {
     while (queue.length) {
       const t = queue.shift();
       try {
-        const r = await sendPush(env, accessToken, t.id, content);
+        const r = await sendPush(env, accessToken, t, content);
         if (r.ok) sent++;
         else {
           failed++;
@@ -267,6 +297,8 @@ async function handleDrill(env, fs, accessToken, caller, body) {
     .filter((t) => active.has(t.uid) && t.uid !== caller.uid && (!targets || targets.has(t.uid)));
   const result = await sendToTokens(env, fs, accessToken, tokens, {
     kind: 'test',
+    level: test.sound === 'alert' ? 'alert' : 'real',
+    ack: `test:${id}`,
     urgent: test.sound !== 'alert',
     title: `🔔 테스트 알람 · ${test.sound === 'alert' ? '2급' : '1급'} (실제 상황 아님)`,
     body: `${test.byName ? `${test.byName}: ` : ''}${test.message || '경보 훈련입니다. 앱을 열어 확인을 눌러 주세요.'}`.slice(0, 300),
@@ -278,6 +310,7 @@ async function handleDrill(env, fs, accessToken, caller, body) {
 async function handleTestPush(env, fs, accessToken, caller) {
   const tokens = (await fs.list('pushTokens')).filter((t) => t.uid === caller.uid);
   const result = await sendToTokens(env, fs, accessToken, tokens, {
+    kind: 'push-test',
     title: '🔔 테스트 알림',
     body: '이 기기는 비상선언 알림을 받을 수 있습니다.',
   });

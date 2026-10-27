@@ -199,6 +199,10 @@ export function empty(text) {
 export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+/** 우리 안드로이드 앱(android/) 안에서 열렸으면 앱 기능(window.FamilyApp)을 쓸 수 있다. */
+export const nativeApp = typeof window !== 'undefined' && window.FamilyApp ? window.FamilyApp : null;
+export const isAndroid = /Android/i.test(navigator.userAgent);
+export const ANDROID_APP_URL = 'https://github.com/devmh1003/emergency/releases/latest/download/family-emergency.apk';
 export const isStandalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
 
 // ---------- 글자 크기 (이 휴대폰에만 저장) ----------

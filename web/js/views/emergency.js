@@ -1,5 +1,5 @@
 // 비상 경보 화면(2급 → 1급), 빠른 선언, 전체 화면 경보, 테스트 알람
-import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
+import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, ask, nativeApp } from '../dom.js';
 import { errorMessage, callWorker } from '../firebase.js';
 import { t } from '../i18n.js';
 import {
@@ -122,6 +122,24 @@ export function maybeAlarm(state) {
       location.hash = '/';
     },
   });
+}
+
+/**
+ * 안드로이드 앱의 전체 화면 경보에서 확인을 누른 경보. ack: 비상이면 alarmKey, 테스트면 "test:{id}".
+ * 확인 기록을 남기고, 사이트에 같은 경보가 떠 있으면 닫는다.
+ */
+export function applyNativeAck(state, ack) {
+  const uid = state.me?.id;
+  if (!uid || !ack) return;
+  if (ack.startsWith('test:')) {
+    const id = ack.slice(5);
+    writeLocal(testAckStorageKey(uid), id);
+    ackAlarmTest(state.me, id).catch(() => {});
+  } else {
+    writeLocal(ackStorageKey(uid), ack);
+  }
+  const shown = document.getElementById('alarm');
+  if (shown && (shown.dataset.key === ack || shown.dataset.key === ack.slice(5))) closeOverlay(shown);
 }
 
 /** 관리자가 보낸 가족 전체 테스트 알람. 보낸 지 30분 안에 처음 보면 울리고, 확인을 누르면 관리자에게 기록이 간다. */
@@ -494,7 +512,8 @@ export function testPanel(state, unsubs, onChange) {
     h('div', { class: 'row' },
       h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 1급 경보음 듣기')),
       h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('alert') }, t('⚠️ 2급 화면 보기 (소리 없음)')),
-      h('button', { type: 'button', class: 'btn btn-outline', onClick: (ev) => busy(ev.currentTarget, sendMyTestPush) }, t('🔔 내 휴대폰에 테스트 알림'))),
+      h('button', { type: 'button', class: 'btn btn-outline', onClick: (ev) => busy(ev.currentTarget, sendMyTestPush) }, t('🔔 내 휴대폰에 테스트 알림')),
+      nativeApp ? h('button', { type: 'button', class: 'btn btn-outline', onClick: () => nativeApp.testAlarm() }, t('📱 앱 전체 화면 경보 시험')) : null),
     h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다. 테스트 알림은 알림을 켠 내 기기로만 갑니다.'), ' ',
       h('a', { href: '#/settings' }, t('화면이 꺼져도 울리게: 설정 → 경보 대기 모드 →'))));
   if (!state.isAdmin) return panel(t('🔊 소리·알림 테스트'), null, local);

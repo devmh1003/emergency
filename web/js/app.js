@@ -16,7 +16,7 @@ import { homeView } from './views/home.js';
 import { meetView } from './views/meet.js';
 import { protocolsView, protocolDetailView } from './views/protocols.js';
 import { familyView, memberDetailView } from './views/family.js';
-import { emergencyView, maybeAlarm, maybeTestAlarm } from './views/emergency.js';
+import { emergencyView, maybeAlarm, maybeTestAlarm, applyNativeAck } from './views/emergency.js';
 import { memberEditView, meetEditListView, meetEditView, protocolAdminView, protocolEditView } from './views/admin.js';
 import { recordsAdminView, directoryView } from './views/records.js';
 import { adminHubView } from './views/adminhub.js';
@@ -387,6 +387,7 @@ function startSubscriptions(uid) {
       if (first) {
         route();
         refreshPushToken(uid);
+        takeNativeAck();
       } else {
         route();
       }
@@ -466,6 +467,14 @@ function gateKind(user) {
   if (!g || !user) return null;
   return ['family', 'admin', 'backup'].find((k) => g[`${k}Uid`] === user.uid) || null;
 }
+
+// 안드로이드 앱: 알림 토큰이 새로 나오거나, 앱의 전체 화면 경보에서 확인을 누르고 들어온 경우
+function takeNativeAck() {
+  const ack = window.FamilyApp?.takePendingAck?.();
+  if (ack) applyNativeAck(state, ack);
+}
+window.familyNativeToken = () => { if (state.me) refreshPushToken(state.me.id); };
+window.familyNativeAckPending = () => { if (state.me) takeNativeAck(); };
 
 function start() {
   document.documentElement.dataset.fontScale = savedFontScale();
