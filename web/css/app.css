@@ -848,7 +848,7 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
 
 .panel-subhead { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
 .auth-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.header-lang { min-height: 2rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem; }
+.header-lang { min-height: 2rem; padding: 0.25rem 0.625rem; font-size: 0.8125rem; white-space: nowrap; flex-shrink: 0; }
 .code-row + .code-row { border-top: 1px solid var(--line); padding-top: 0.5rem; margin-top: 0.5rem; }
 .code-row form { margin: 0.5rem 0 0.75rem; }
 .panel-subhead:first-child { margin-top: 0; }

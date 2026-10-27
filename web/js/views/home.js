@@ -75,8 +75,7 @@ function tiles(state) {
     ['#/print', '🖨', t('인쇄용 비상카드'), t('지갑·배낭에 넣을 종이 카드')],
   ];
   const admin = state.isAdmin ? [
-    ['#/admin/logs', '📋', t('관리자 기록'), t('알림·신고·관리 작업 한눈에'), 'tile-admin'],
-    ['#/admin/directory', '🗃', t('가족 정보 한눈에'), t('모든 가족의 개인정보 표'), 'tile-admin'],
+    ['#/admin', '🛠', t('관리자 설정'), t('비상 선언·해제, 소리 테스트, 가족 등록'), 'tile-admin'],
     ['#/emergency', '🚨', t('비상 경보'), state.emergency?.active ? t('1급 격상·해제·테스트') : t('1급·2급 발령, 테스트 알람'), 'tile-admin tile-danger'],
   ] : [['#/emergency', '🚨', t('비상 경보'), state.me.declareCredits >= 1 ? t('선언권 1회 남음 · 경보음 시험') : t('선언권 없음 · 경보음 시험'), 'tile-danger']];
   return h('div', { class: 'tiles' }, [...list, ...admin].map(([href, icon, title, desc, cls = '']) => h('a', { class: `tile ${cls}`, href },

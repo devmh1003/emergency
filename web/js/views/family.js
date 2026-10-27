@@ -105,7 +105,8 @@ export function familyView({ state, live, onChange, navigate }) {
       h('p', { class: 'muted small' }, t('가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.'))),
     state.isAdmin
       ? panel(t('관리자 메뉴'), null, h('div', { class: 'tiles' },
-        [['#/admin/directory', '🗃', t('가족 정보 한눈에'), t('개인정보·연결 상태 표')],
+        [['#/admin', '🛠', t('관리자 설정'), t('비상 선언·해제, 소리 테스트, 가족 등록')],
+          ['#/admin/directory', '🗃', t('가족 정보 한눈에'), t('개인정보·연결 상태 표')],
           ['#/admin/logs', '📋', t('관리자 기록'), t('알림·신고·관리 작업')],
           ['#/admin/meet', '📍', t('집합장소 설정'), t('1~10순위')],
           ['#/admin/protocols', '📘', t('대처법 관리'), t('내용·체크리스트 편집')],

@@ -18,6 +18,7 @@ import { familyView, memberDetailView } from './views/family.js';
 import { emergencyView, maybeAlarm, maybeTestAlarm } from './views/emergency.js';
 import { memberEditView, meetEditListView, meetEditView, protocolAdminView, protocolEditView } from './views/admin.js';
 import { recordsAdminView, directoryView } from './views/records.js';
+import { adminHubView } from './views/adminhub.js';
 import { contactsView } from './views/contacts.js';
 import { guideView } from './views/guide.js';
 import { settingsView, recordsView, printView } from './views/settings.js';
@@ -110,6 +111,7 @@ const routes = [
   ['/settings', settingsView],
   ['/records', recordsView],
   ['/print', printView],
+  ['/admin', adminHubView, true],
   ['/admin/logs', recordsAdminView, true],
   ['/admin/directory', directoryView, true],
   ['/admin/member/:uid', memberEditView, true],
@@ -167,8 +169,10 @@ const NAV = [
   ['/settings', '⚙️', t('설정')],
 ];
 
-// 휴대폰 하단 메뉴는 5칸만
+// 휴대폰 하단 메뉴는 5칸만. 관리자는 대처법 대신 관리자 설정 (대처법은 홈 바로가기에 있다).
 const BOTTOM_NAV = ['/', '/meet', '/protocols', '/family', '/settings'];
+const ADMIN_BOTTOM_NAV = ['/', '/meet', '/family', '/admin', '/settings'];
+const ADMIN_NAV = ['/admin', '🛠', t('관리자')];
 
 function isActive(to, path) {
   const section = '/' + (path.split('/')[1] || '');
@@ -217,8 +221,9 @@ function renderChrome() {
   const path = currentPath();
   mount(topNavEl, h('div', { class: 'top-nav-inner' },
     NAV.map(([to, , label]) => navLink(to, null, label, path)),
-    state.isAdmin ? navLink('/admin/logs', null, t('관리자 기록'), path, 'nav-admin') : null));
-  mount(navEl, NAV.filter(([to]) => BOTTOM_NAV.includes(to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
+    state.isAdmin ? navLink(ADMIN_NAV[0], null, ADMIN_NAV[2], path, 'nav-admin') : null));
+  const bottom = state.isAdmin ? ADMIN_BOTTOM_NAV : BOTTOM_NAV;
+  mount(navEl, bottom.map((to) => [...NAV, ADMIN_NAV].find(([x]) => x === to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
   mount(bannerEl, state.online ? null : offlineBanner(), emergencyBanner());
   renderFooter();
 }

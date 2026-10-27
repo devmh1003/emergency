@@ -56,7 +56,7 @@ function pushPanel(state) {
           }
         }),
       }, t('테스트 알림')),
-      h('button', { class: 'btn btn-outline', onClick: () => previewAlarm() }, t('🔊 경보음 시험'))),
+      h('button', { class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 경보음 시험'))),
     h('p', { class: 'muted small', style: { marginTop: '0.75rem' } }, t('알림은 휴대폰마다 따로 켜야 합니다. 사이트가 열려 있을 때는 경보음도 울립니다.')));
 }
 

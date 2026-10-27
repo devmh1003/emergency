@@ -37,6 +37,7 @@ const APP_FILES = [
   'js/data/protocols.en.js',
   'js/data/protocols.js',
   'js/views/admin.js',
+  'js/views/adminhub.js',
   'js/views/auth.js',
   'js/views/contacts.js',
   'js/views/emergency.js',

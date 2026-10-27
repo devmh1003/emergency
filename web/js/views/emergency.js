@@ -1,6 +1,6 @@
 // 비상 경보 화면(2급 → 1급), 빠른 선언, 전체 화면 경보, 테스트 알람
 import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
-import { errorMessage } from '../firebase.js';
+import { errorMessage, callWorker } from '../firebase.js';
 import { t } from '../i18n.js';
 import {
   declareEmergency, escalateEmergency, endEmergency, watchEmergencyLog,
@@ -158,20 +158,36 @@ export async function maybeTestAlarm(state, test) {
   });
 }
 
-/** 이 휴대폰에서만 1급 경보음을 시험한다. 아무에게도 알리지 않는다. (2급은 경보음이 없다) */
-export function previewAlarm() {
+/**
+ * 이 휴대폰에서만 경보 화면을 미리 본다. 아무에게도 알리지 않는다.
+ * level 'real': 1급 경보음과 함께, 'alert': 2급처럼 소리 없이 화면만.
+ */
+export function previewAlarm(level = 'real') {
+  const real = level === 'real';
   showOverlay({
     kind: 'preview',
-    key: 'preview-real',
-    variant: 'test',
-    sound: true,
-    label: t('TEST · 이 휴대폰 경보음 시험'),
-    icon: '🔊',
-    title: SOUND_LABEL.real,
-    lines: [t('이 휴대폰에서만 울립니다. 가족에게는 아무 알림도 가지 않습니다.'), t('소리가 작으면 휴대폰 음량을 올리고, 무음·방해금지 모드를 확인하세요.')],
+    key: `preview-${level}`,
+    variant: real ? 'test' : 'alert',
+    sound: real,
+    label: real ? t('TEST · 이 휴대폰 경보음 시험') : t('TEST · 2급 알림 화면 미리보기'),
+    icon: real ? '🔊' : '⚠️',
+    title: SOUND_LABEL[real ? 'real' : 'alert'],
+    lines: real
+      ? [t('이 휴대폰에서만 울립니다. 가족에게는 아무 알림도 가지 않습니다.'), t('소리가 작으면 휴대폰 음량을 올리고, 무음·방해금지 모드를 확인하세요.')]
+      : [t('2급 비상이면 이렇게 소리 없이 화면만 뜹니다. 가족에게는 아무 알림도 가지 않습니다.')],
     confirmText: t('닫기'),
     autoStopMs: 15_000,
   });
+}
+
+/** 내 휴대폰(알림을 켠 기기)으로 푸시 알림을 하나 보낸다. */
+export async function sendMyTestPush() {
+  try {
+    const r = await callWorker('/test-push');
+    toast(r.sent ? t('테스트 알림을 보냈습니다. 잠시 후 도착합니다.') : t('이 계정에 등록된 기기가 없습니다. 먼저 알림을 켜세요.'));
+  } catch (err) {
+    toast(errorMessage(err), 'error');
+  }
 }
 
 // ---------- 비상 경보 화면 ----------
@@ -248,24 +264,66 @@ function sinceText(at) {
   return d ? ` ${t('({time} 지남)', { time: formatRemaining(Date.now() - d.getTime()) })}` : '';
 }
 
+function endButton(state) {
+  return h('button', {
+    class: 'btn btn-lg',
+    onClick: (ev) => {
+      if (!confirm(t('경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.'))) return;
+      busy(ev.currentTarget, async () => {
+        try {
+          const r = await endEmergency(state.me);
+          toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      });
+    },
+  }, t('✅ 경보 해제'));
+}
+
+/** 관리자: 메시지 없이 바로 2급 → 1급 격상 */
+function escalateButton(state) {
+  return h('button', {
+    class: 'btn btn-secondary btn-lg',
+    onClick: (ev) => {
+      if (!confirm(t('1급으로 격상할까요? 가족 모두에게 경보음과 알림이 가고, 지금부터 집합 시간이 계산됩니다.'))) return;
+      busy(ev.currentTarget, async () => {
+        try {
+          const r = await escalateEmergency(state.me, state.emergency, '');
+          toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      });
+    },
+  }, t('🚨 1급으로 격상'));
+}
+
+/** 관리자 설정 화면의 비상 조작: 평상시면 빠른 선언, 비상 중이면 현재 상황과 격상·해제 */
+export function emergencyControl(state) {
+  const e = state.emergency;
+  const level = emergencyLevel(e);
+  if (!level) {
+    return h('div', { class: 'stack' },
+      alertBox('success', t('지금은 평상시입니다'), h('p', null, t('비상이 생기면 아래 상황 버튼을 누르고 확인하면 바로 가족 모두에게 갑니다.'))),
+      quickDeclarePanel(state),
+      h('p', { class: 'small' }, h('a', { href: '#/emergency' }, t('메시지를 함께 보내려면 비상 경보 화면에서 발령하세요 →'))));
+  }
+  const actor = levelActor(e);
+  const at = level === 'real' ? realStartedAt(e) : toDate(e.declaredAt);
+  return h('div', { class: 'stack' },
+    alertBox(level === 'real' ? 'emergency' : 'warning', `${t(levelTitle(level))}: ${t(emergencyLabel(e.type))}`,
+      h('p', null, `${actor.name || t('가족')} · ${formatDateTime(at)}${sinceText(at)}`),
+      e.message ? h('p', null, e.message) : null,
+      h('p', null, level === 'real' ? t('경보음과 알림이 나갔습니다. 집합 시간이 계산되고 있습니다.') : t('알림만 나갔습니다 (경보음 없음). 상황이 커지면 1급으로 격상하세요.'))),
+    h('div', { class: 'row' }, level === 'alert' ? escalateButton(state) : null, endButton(state)));
+}
+
 function endPanel(state) {
   if (!state.isAdmin) return alertBox('info', null, h('p', null, t('경보 해제는 관리자만 할 수 있습니다.')));
   return panel(t('경보 해제'), null,
     h('p', null, t('상황이 끝났으면 해제하세요. 가족 모두에게 해제 알림이 가고, 집합장소 시간이 평상시 표시로 돌아갑니다.')),
-    h('button', {
-      class: 'btn btn-lg',
-      onClick: (ev) => {
-        if (!confirm(t('경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.'))) return;
-        busy(ev.currentTarget, async () => {
-          try {
-            const r = await endEmergency(state.me);
-            toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
-          } catch (err) {
-            toast(errorMessage(err), 'error');
-          }
-        });
-      },
-    }, t('✅ 경보 해제')));
+    endButton(state));
 }
 
 function alertActiveCard(state) {
@@ -342,7 +400,8 @@ export function quickDeclarePanel(state) {
             const r = await declareEmergency(state.me, { level, type, message: '' });
             if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
             else toast(t('{level}을 알렸습니다. 알림 {n}건 발송.', { level: t(levelTitle(level)), n: r?.sent ?? 0 }));
-            location.hash = '/emergency';
+            // 관리자 설정 화면에서는 그 자리에 머문다 (선언 후 격상·해제도 거기서 한다).
+            if (!location.hash.startsWith('#/admin')) location.hash = '/emergency';
           } catch (err) {
             toast(errorMessage(err), 'error');
           }
@@ -419,13 +478,15 @@ function declareCard(state, navigate) {
 
 // ---------- 테스트 알람 ----------
 
-function testPanel(state, unsubs) {
+export function testPanel(state, unsubs) {
   const local = h('div', { class: 'stack' },
-    h('p', null, t('이 휴대폰에서만 1급 경보음을 들어 봅니다. 가족에게는 아무 알림도 가지 않습니다.')),
+    h('p', null, t('이 휴대폰에서만 시험합니다. 가족에게는 아무 알림도 가지 않습니다.')),
     h('div', { class: 'row' },
-      h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm() }, t('🔊 1급 경보음 듣기'))),
-    h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다.')));
-  if (!state.isAdmin) return panel(t('🔔 경보 테스트'), null, local);
+      h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 1급 경보음 듣기')),
+      h('button', { type: 'button', class: 'btn btn-outline', onClick: () => previewAlarm('alert') }, t('⚠️ 2급 화면 보기 (소리 없음)')),
+      h('button', { type: 'button', class: 'btn btn-outline', onClick: (ev) => busy(ev.currentTarget, sendMyTestPush) }, t('🔔 내 휴대폰에 테스트 알림'))),
+    h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다. 테스트 알림은 알림을 켠 내 기기로만 갑니다.')));
+  if (!state.isAdmin) return panel(t('🔊 소리·알림 테스트'), null, local);
 
   const form = h('form', { class: 'stack' },
     field(t('소리'), select('sound', [{ value: 'real', label: SOUND_LABEL.real }, { value: 'alert', label: SOUND_LABEL.alert }], 'real')),
@@ -478,7 +539,7 @@ function testPanel(state, unsubs) {
   }, () => resultBox.replaceChildren(empty(t('테스트 기록을 불러오지 못했습니다.')))));
   unsubs.push(() => ackUnsub?.());
 
-  return panel(t('🔔 경보 테스트'), null,
+  return panel(t('🔊 소리·알림 테스트'), null,
     h('h3', { class: 'panel-subhead' }, t('이 휴대폰에서 듣기')),
     local,
     h('h3', { class: 'panel-subhead' }, t('가족 전체 테스트 알람')),
