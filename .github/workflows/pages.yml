@@ -16,7 +16,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: 버전 표시 (서비스 워커가 새 버전을 받도록)
         run: |
           mkdir -p _site
@@ -25,7 +25,7 @@ jobs:
           sed -i "s/const BUILD = 'dev';/const BUILD = '${BUILD}';/" _site/sw.js
           sed -i "s/data-build=\"dev\"/data-build=\"${BUILD}\"/" _site/index.html
           grep -q "const BUILD = '${BUILD}'" _site/sw.js
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: _site
 
@@ -40,4 +40,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
