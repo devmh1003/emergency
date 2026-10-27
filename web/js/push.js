@@ -4,6 +4,7 @@ import { getMessaging, getToken, deleteToken, isSupported } from 'https://www.gs
 import { app, config } from './firebase.js';
 import { savePushToken, deletePushToken } from './store.js';
 import { isIOS, isStandalone } from './dom.js';
+import { t } from './i18n.js';
 
 const TOKEN_KEY = 'family.pushToken';
 
@@ -32,11 +33,11 @@ export function pushStatus() {
 }
 
 async function currentToken() {
-  if (!config.vapidKey) throw new Error('알림 키(vapidKey)가 설정되지 않았습니다.');
+  if (!config.vapidKey) throw new Error(t('알림 키(vapidKey)가 설정되지 않았습니다.'));
   if (!(await isSupported())) {
     throw new Error(isIOS && !isStandalone
-      ? '아이폰은 먼저 공유 버튼 → "홈 화면에 추가"를 한 뒤, 홈 화면 아이콘으로 열어서 알림을 켜세요.'
-      : '이 브라우저는 알림을 지원하지 않습니다.');
+      ? t('아이폰은 먼저 공유 버튼 → "홈 화면에 추가"를 한 뒤, 홈 화면 아이콘으로 열어서 알림을 켜세요.')
+      : t('이 브라우저는 알림을 지원하지 않습니다.'));
   }
   const registration = await navigator.serviceWorker.ready;
   return getToken(getMessaging(app), { vapidKey: config.vapidKey, serviceWorkerRegistration: registration });
@@ -45,7 +46,7 @@ async function currentToken() {
 export async function enablePush(uid) {
   if (!('Notification' in window)) await currentToken(); // 지원하지 않는 이유를 오류로 알려준다
   const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('알림 권한이 거부됐습니다. 휴대폰 설정에서 이 사이트의 알림을 허용하세요.');
+  if (permission !== 'granted') throw new Error(t('알림 권한이 거부됐습니다. 휴대폰 설정에서 이 사이트의 알림을 허용하세요.'));
   const token = await currentToken();
   await savePushToken(uid, token);
   storeToken(token);

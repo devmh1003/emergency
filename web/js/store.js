@@ -3,8 +3,11 @@ import {
   doc, collection, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, query, where, orderBy, limit,
   writeBatch, serverTimestamp, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
-import { db, createAccountForOther, callWorker } from './firebase.js';
+import {
+  db, auth, callWorker, createAccount, credentialWorks, newAccountEmail, randomToken, signIn, logout,
+} from './firebase.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
+import { t } from './i18n.js';
 
 const ref = (...path) => doc(db, ...path);
 
@@ -94,16 +97,23 @@ export function checkIn(me, type, pos, note = '', emergency = null) {
 
 // ---------- 비상선언 ----------
 
-export async function declareEmergency(me, { type, message }) {
+/** level: 'alert'(경계) | 'real'(실제) */
+export async function declareEmergency(me, { type, message, level }) {
   const isAdmin = me.role === 'admin';
   const batch = writeBatch(db);
   const data = {
     active: true,
+    level,
     type,
     message: message.slice(0, 500),
     declaredBy: me.id,
     declaredByName: me.name,
     declaredAt: serverTimestamp(),
+    // 실제 상황이면 지금부터 집합 시간을 센다. 경계면 아직 세지 않는다.
+    realAt: level === 'real' ? serverTimestamp() : deleteField(),
+    // 지난 비상의 "실제 전환" 기록은 지운다.
+    escalatedBy: deleteField(),
+    escalatedByName: deleteField(),
   };
   // merge: 이전 해제 기록과 알림 발송 표시는 남겨 둔다.
   batch.set(ref('emergency', 'current'), data, { merge: true });
@@ -112,7 +122,27 @@ export async function declareEmergency(me, { type, message }) {
     batch.update(ref('members', me.id), { declareCredits: me.declareCredits - 1 });
   }
   batch.set(doc(collection(db, 'emergencyLog')), {
-    action: 'declare', type, message: data.message, by: me.id, byName: me.name, at: serverTimestamp(),
+    action: 'declare', level, type, message: data.message, by: me.id, byName: me.name, at: serverTimestamp(),
+  });
+  await batch.commit();
+  return notifyFamily();
+}
+
+/** 경계 → 실제 전환. 이때부터 집합 시간을 센다. 일반 가족은 선언권 1회를 쓴다. */
+export async function escalateEmergency(me, current, message = '') {
+  const isAdmin = me.role === 'admin';
+  const batch = writeBatch(db);
+  const data = {
+    level: 'real',
+    realAt: serverTimestamp(),
+    escalatedBy: me.id,
+    escalatedByName: me.name,
+  };
+  if (message.trim()) data.message = message.trim().slice(0, 500);
+  batch.update(ref('emergency', 'current'), data);
+  if (!isAdmin) batch.update(ref('members', me.id), { declareCredits: me.declareCredits - 1 });
+  batch.set(doc(collection(db, 'emergencyLog')), {
+    action: 'escalate', level: 'real', type: current.type, message: data.message || '', by: me.id, byName: me.name, at: serverTimestamp(),
   });
   await batch.commit();
   return notifyFamily();
@@ -139,6 +169,39 @@ export async function notifyFamily() {
     return await callWorker('/notify');
   } catch (err) {
     return { error: err.message };
+  }
+}
+
+// ---------- 테스트 알람 ----------
+// 관리자가 보내면 가족 모두의 휴대폰에서 "테스트" 경보가 울리고, 각자 확인을 누르면 기록이 남는다.
+
+export const watchLatestAlarmTest = (cb, onError) => watchCollection('alarmTests', (list) => cb(list[0] || null), onError, orderBy('at', 'desc'), limit(1));
+export const watchAlarmTests = (cb, onError, max = 100) => watchCollection('alarmTests', cb, onError, orderBy('at', 'desc'), limit(max));
+export const watchAlarmAcks = (testId, cb, onError) => watchCollection(`alarmTests/${testId}/acks`, cb, onError);
+
+/** sound: 'alert'(경계음) | 'real'(실제음) */
+export async function sendAlarmTest(me, { message, sound }) {
+  const testRef = doc(collection(db, 'alarmTests'));
+  await setDoc(testRef, {
+    by: me.id, byName: me.name, at: serverTimestamp(), message: message.slice(0, 200), sound,
+  });
+  try {
+    return { id: testRef.id, ...(await callWorker('/drill', { id: testRef.id })) };
+  } catch (err) {
+    // 알림 서버가 없어도 사이트를 열어 둔 휴대폰에서는 울린다.
+    return { id: testRef.id, error: err.message };
+  }
+}
+
+export function ackAlarmTest(me, testId) {
+  return setDoc(ref('alarmTests', testId, 'acks', me.id), { name: me.name, at: serverTimestamp() });
+}
+
+export async function hasAckedAlarmTest(uid, testId) {
+  try {
+    return (await getDoc(ref('alarmTests', testId, 'acks', uid))).exists();
+  } catch {
+    return false;
   }
 }
 
@@ -188,25 +251,173 @@ function pick(obj, keys) {
   return out;
 }
 
-export async function createMember(form) {
-  const uid = await createAccountForOther(form.loginId, form.code);
+// ---------- 접속 코드와 이름 목록 ----------
+// public/gates: 관문 계정(코드마다 하나)과 세대. access/family, access/admin: 이름 목록과 각 사람 계정의 로그인 열쇠.
+
+export async function getGates() {
+  const snap = await getDoc(ref('public', 'gates'));
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function getAccess(kind) {
+  const snap = await getDoc(ref('access', kind));
+  return snap.exists() ? (snap.data().people || []) : [];
+}
+
+const accessKind = (role) => (role === 'admin' ? 'admin' : 'family');
+
+/** 이름 목록 갱신: 한 사람을 빼거나(entry 없음) 넣거나 바꾼다. */
+async function accessUpdate(batch, kind, uid, entry) {
+  const people = (await getAccess(kind)).filter((p) => p.uid !== uid);
+  if (entry) people.push(entry);
+  batch.set(ref('access', kind), { people, updatedAt: serverTimestamp() });
+}
+
+/** 접속 코드로 관문 계정에 로그인한다. 어느 코드였는지 돌려준다: 'family' | 'admin' | 'backup' */
+export async function loginWithCode(code) {
+  const gates = await getGates();
+  if (!gates) throw new Error(t('아직 초기 설정이 안 됐습니다.'));
+  let lastErr = null;
+  for (const kind of ['family', 'admin', 'backup']) {
+    try {
+      await signIn(gates[`${kind}Email`], code);
+      return kind;
+    } catch (err) {
+      lastErr = err;
+      if (err.code === 'auth/too-many-requests' || err.code === 'auth/network-request-failed') break;
+    }
+  }
+  throw lastErr;
+}
+
+/** 이름을 고르면 관문 계정에서 그 사람 계정으로 바꿔 로그인한다. */
+export async function loginAsPerson(person) {
+  await logout();
+  await signIn(person.email, person.key);
+}
+
+/** 지금 관문 계정 중 이 코드로 열리는 것이 있는지 (코드끼리 겹치지 않게) */
+async function codeInUse(gates, code, except) {
+  for (const kind of ['family', 'admin', 'backup']) {
+    if (kind !== except && await credentialWorks(gates[`${kind}Email`], code)) return kind;
+  }
+  return null;
+}
+
+/**
+ * 처음 설정: 관문 계정 3개와 첫 관리자 계정을 만들고, 첫 관리자로 로그인한다.
+ * 예전 방식으로 저장된 가족·관리자는 새 세대가 시작되면서 자동으로 접근이 막힌다.
+ */
+export async function setupAccess({ name, phone, family, admin, backup }) {
+  const gen = Math.floor(Date.now() / 1000);
+  const gate = {};
+  for (const [kind, code] of [['family', family], ['admin', admin], ['backup', backup]]) {
+    const email = newAccountEmail(`g-${kind}`);
+    gate[kind] = { email, uid: await createAccount(email, code) };
+  }
+  const person = { email: newAccountEmail('p'), key: randomToken(28), name };
+  person.uid = await createAccount(person.email, person.key);
+  await signIn(person.email, person.key);
+
+  const batch = writeBatch(db);
+  batch.set(ref('members', person.uid), {
+    name, phone, role: 'admin', active: true, declareCredits: 1, order: 0, last: null, gen,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  batch.set(ref('public', 'gates'), {
+    gen,
+    familyEmail: gate.family.email, familyUid: gate.family.uid,
+    adminEmail: gate.admin.email, adminUid: gate.admin.uid,
+    backupEmail: gate.backup.email, backupUid: gate.backup.uid,
+    setupBy: person.uid, at: serverTimestamp(),
+  });
+  batch.set(ref('access', 'admin'), { people: [person], updatedAt: serverTimestamp() });
+  batch.set(ref('access', 'family'), { people: [], updatedAt: serverTimestamp() });
+  try {
+    await batch.commit();
+  } catch (err) {
+    await logout();
+    if (err.code === 'permission-denied') throw new Error(t('이미 초기 설정이 끝났습니다.'));
+    throw err;
+  }
+}
+
+/**
+ * 접속 코드 바꾸기: 새 관문 계정을 만들어 바꿔 끼운다 (예전 코드를 몰라도 된다).
+ * 관리자는 세 코드 모두, 백업 코드로 들어온 사람은 관리자 코드만 바꿀 수 있다 (규칙이 막는다).
+ */
+export async function changeAccessCode(kind, code) {
+  const gates = await getGates();
+  const clash = await codeInUse(gates, code, kind);
+  if (clash) throw new Error(t('다른 접속 코드와 같습니다. 다른 코드를 쓰세요.'));
+  const email = newAccountEmail(`g-${kind}`);
+  const uid = await createAccount(email, code);
+  const batch = writeBatch(db);
+  batch.set(ref('public', 'gates'), { [`${kind}Email`]: email, [`${kind}Uid`]: uid, at: serverTimestamp() }, { merge: true });
+  if (auth.currentUser?.uid === gates.backupUid) {
+    batch.set(doc(collection(db, 'auditLog')), {
+      action: 'backup.adminCode', detail: '백업 코드로 관리자 코드를 바꿈', by: auth.currentUser.uid, byName: '백업 코드', at: serverTimestamp(),
+    });
+  } else {
+    addAudit(batch, 'code.change', { targetName: kind, detail: `${kind} 코드 변경` });
+  }
+  await batch.commit();
+}
+
+/** 백업 코드로 들어와서 관리자를 새로 추가한다 (관리자가 아무도 없거나 연락이 안 될 때). */
+export async function backupAddAdmin({ name, phone }) {
+  const gates = await getGates();
+  const person = { email: newAccountEmail('p'), key: randomToken(28), name };
+  person.uid = await createAccount(person.email, person.key);
+  const batch = writeBatch(db);
+  batch.set(ref('members', person.uid), {
+    name, phone, role: 'admin', active: true, declareCredits: 1, order: 0, last: null, gen: gates.gen,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  await accessUpdate(batch, 'admin', person.uid, person);
+  batch.set(doc(collection(db, 'auditLog')), {
+    action: 'backup.adminAdd', targetName: name, detail: '백업 코드로 관리자 추가', by: auth.currentUser.uid, byName: '백업 코드', at: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+// ---------- 가족 관리 (관리자) ----------
+
+/** 새 가족: 무작위 열쇠로 계정을 만들고 이름 목록에 넣는다. 본인은 가족 코드(관리자면 관리자 코드)로 들어온다. */
+export async function createMember(form, gen) {
+  const person = { email: newAccountEmail('p'), key: randomToken(28), name: form.name };
+  const uid = await createAccount(person.email, person.key);
+  person.uid = uid;
   const batch = writeBatch(db);
   batch.set(ref('members', uid), {
     ...pick(form, MEMBER_FIELDS),
     last: null,
+    gen,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
-  batch.set(ref('profiles', uid), { loginId: form.loginId, ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() });
-  addAudit(batch, 'member.create', { target: uid, targetName: form.name, detail: `아이디 ${form.loginId} · ${form.role === 'admin' ? '관리자' : '가족'}` });
+  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() });
+  await accessUpdate(batch, accessKind(form.role), uid, person);
+  addAudit(batch, 'member.create', { target: uid, targetName: form.name, detail: form.role === 'admin' ? '관리자' : '가족' });
   await batch.commit();
   return uid;
 }
 
 const CHANGE_LABELS = { role: '권한', active: '접근', declareCredits: '선언권', name: '이름', phone: '전화번호', links: '볼 수 있는 가족' };
 
-export async function updateMember(uid, form, targetName = form.name) {
+export async function updateMember(uid, form, targetName = form.name, before = null) {
   const batch = writeBatch(db);
+  // 이름이나 권한이 바뀌면 로그인 이름 목록도 옮긴다 (가족 목록 ↔ 관리자 목록).
+  if (before && (('name' in form && form.name !== before.name) || ('role' in form && form.role !== before.role))) {
+    const fromKind = accessKind(before.role);
+    const toKind = accessKind(form.role ?? before.role);
+    const entry = (await getAccess(fromKind)).find((p) => p.uid === uid);
+    if (entry) {
+      const moved = { ...entry, name: form.name ?? before.name };
+      if (fromKind !== toKind) await accessUpdate(batch, fromKind, uid, null);
+      await accessUpdate(batch, toKind, uid, moved);
+    }
+  }
   batch.set(ref('members', uid), { ...pick(form, MEMBER_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
   batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
   let action = 'member.update';
@@ -225,10 +436,11 @@ export async function updateMyInfo(uid, form) {
   await batch.commit();
 }
 
-/** 가족 삭제: 데이터 접근을 먼저 끊고(members 삭제), 로그인 계정은 Worker가 지운다. */
-export async function deleteMember(uid, name) {
+/** 가족 삭제: 데이터 접근을 먼저 끊고(members 삭제, 이름 목록에서 뺌), 로그인 계정은 Worker가 지운다. */
+export async function deleteMember(uid, name, role = 'member') {
   const batch = writeBatch(db);
   batch.delete(ref('members', uid));
+  await accessUpdate(batch, accessKind(role), uid, null);
   batch.delete(ref('profiles', uid));
   batch.delete(ref('checklists', uid));
   addAudit(batch, 'member.delete', { target: uid, targetName: name });
@@ -241,10 +453,15 @@ export async function deleteMember(uid, name) {
   }
 }
 
-export async function setMemberPassword(uid, code, name) {
-  const r = await callWorker('/admin/user', { action: 'setPassword', uid, password: code });
-  await audit('member.resetCode', { target: uid, targetName: name, detail: '비밀코드 초기화' });
-  return r;
+/** 예전 방식(세대가 다른) 계정 문서 정리. 이미 접근이 막혀 있어 지워도 데이터 접근에는 영향이 없다. */
+export async function deleteLegacyMembers(list) {
+  const batch = writeBatch(db);
+  for (const m of list) {
+    batch.delete(ref('members', m.id));
+    batch.delete(ref('profiles', m.id));
+  }
+  addAudit(batch, 'member.legacyCleanup', { detail: `${list.length}개` });
+  await batch.commit();
 }
 
 export async function deleteCheckin(c) {
@@ -252,36 +469,6 @@ export async function deleteCheckin(c) {
   batch.delete(ref('checkins', c.id));
   addAudit(batch, 'checkin.delete', { target: c.uid, targetName: c.name, detail: '신고 기록 삭제' });
   await batch.commit();
-}
-
-// ---------- 초기 설정 (첫 관리자) ----------
-
-export async function isSetupDone() {
-  const snap = await getDoc(ref('config', 'setup'));
-  return snap.exists();
-}
-
-/** 이미 로그인한 사용자를 첫 관리자로 등록한다. */
-export async function registerFirstAdmin(uid, form) {
-  const batch = writeBatch(db);
-  batch.set(ref('members', uid), {
-    name: form.name,
-    phone: form.phone,
-    role: 'admin',
-    active: true,
-    declareCredits: 1,
-    order: 0,
-    last: null,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp(),
-  });
-  batch.set(ref('config', 'setup'), { by: uid, at: serverTimestamp() });
-  await batch.commit();
-  // 관리자가 된 뒤에 쓰므로 로그인 아이디 기록도 남길 수 있다.
-  const profile = { updatedAt: serverTimestamp() };
-  if (form.loginId) profile.loginId = form.loginId;
-  if (form.email) profile.email = form.email;
-  await setDoc(ref('profiles', uid), profile);
 }
 
 // ---------- 집합장소 ----------
@@ -311,16 +498,14 @@ export async function deleteMeetingPoint(rank, name) {
   await batch.commit();
 }
 
-export function addMeetingLog(me, rank, message, pos) {
+// 가족 전체가 보는 게시판이므로 위치 좌표는 남기지 않는다 (지정되지 않은 가족의 위치가 보이지 않게).
+export function addMeetingLog(me, rank, message) {
   const batch = writeBatch(db);
   batch.set(doc(collection(db, 'meetingLogs')), {
     rank: Number(rank),
     uid: me.id,
     name: me.name,
     message: message.slice(0, 300),
-    lat: pos?.lat ?? null,
-    lng: pos?.lng ?? null,
-    accuracy: pos?.accuracy ?? null,
     at: serverTimestamp(),
     clientAt: Timestamp.now(),
   });

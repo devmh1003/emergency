@@ -4,6 +4,7 @@ import {
   meetingSchedule, scheduleWarnings, formatOffset, formatRemaining, memberStatus,
   ageFromBirth, cleanPhone, smsHref, parseSteps, stepsToText, parseChecklist,
   checklistProgress, checklistKey, directionLinks,
+  emergencyLevel, alarmKey, levelActor, emergencyLogTitle, isFreshAlarmTest, buildTimeline,
 } from '../web/js/logic.js';
 import { DEFAULT_PROTOCOLS } from '../web/js/data/protocols.js';
 
@@ -136,23 +137,18 @@ test('기본 프로토콜은 id와 체크리스트 id가 겹치지 않는다', (
   }
 });
 
-test('아이디 로그인 주소 변환', async () => {
-  const { loginEmail, loginIdFromEmail, isValidLoginId, normalizeLoginId, secretCodeProblem } = await import('../web/js/logic.js');
-  assert.equal(loginEmail(' Dad ', 'p1'), 'dad@p1.firebaseapp.com');
-  assert.equal(loginEmail('old@mail.com', 'p1'), 'old@mail.com');
-  assert.equal(loginIdFromEmail('dad@p1.firebaseapp.com', 'p1'), 'dad');
-  assert.equal(loginIdFromEmail('old@mail.com', 'p1'), 'old@mail.com');
-  assert.equal(normalizeLoginId('  MoM_1 '), 'mom_1');
-  assert.ok(isValidLoginId('mom'));
-  assert.ok(isValidLoginId('kim.minho-2'));
-  assert.ok(!isValidLoginId('ab'));
-  assert.ok(!isValidLoginId('_mom'));
-  assert.ok(!isValidLoginId('엄마'));
-  assert.ok(!isValidLoginId('a'.repeat(21)));
-  assert.equal(secretCodeProblem('12345'), '비밀코드는 6자 이상이어야 합니다.');
-  assert.match(secretCodeProblem('111111'), /쉬운/);
-  assert.match(secretCodeProblem('123456'), /쉬운/);
-  assert.equal(secretCodeProblem('482913'), null);
+test('접속 코드 검사', async () => {
+  const { accessCodeProblem, accessCodesProblem, randomDigits } = await import('../web/js/logic.js');
+  assert.equal(accessCodeProblem('12345', 'family'), '가족 코드는 6자 이상이어야 합니다.');
+  assert.equal(accessCodeProblem('482913', 'family'), null);
+  assert.match(accessCodeProblem('482913', 'admin'), /관리자 코드는 8자/);
+  assert.match(accessCodeProblem('11111111', 'backup'), /쉬운/);
+  assert.match(accessCodeProblem('12345678', 'admin'), /쉬운/);
+  assert.equal(accessCodesProblem({ family: '482913', admin: '58201937', backup: 'river-stone-42' }), null);
+  assert.match(accessCodesProblem({ family: '58201937', admin: '58201937', backup: 'river-stone-42' }), /서로 달라/);
+  const r = randomDigits();
+  assert.match(r, /^\d{8}$/);
+  assert.equal(accessCodeProblem(r, 'admin'), null);
 });
 
 test('오프라인 거리·방향 계산', async () => {
@@ -199,4 +195,43 @@ test('기록을 시간 역순 하나의 목록으로 합치고 거른다', async
   assert.equal(filterTimeline(items, { who: 'a' }).length, 2);
   assert.equal(filterTimeline(items, { q: '다리' }).length, 1);
   assert.equal(filterTimeline(items, { days: 1 }, new Date('2026-10-30T00:00:00')).length, 0);
+});
+
+test('경계 중에는 집합 시간이 시작되지 않고, 실제로 바뀐 시각부터 계산된다', () => {
+  const alert = { active: true, level: 'alert', declaredAt: T0, declaredBy: 'a' };
+  assert.equal(emergencyLevel(alert), 'alert');
+  assert.equal(meetingSchedule(points, alert, at(1)).currentRank, null);
+  // 경계 발령 2시간 뒤 실제 전환 → 1순위 도착은 전환 시각, 대기 120분
+  const real = { ...alert, level: 'real', realAt: at(2), escalatedBy: 'b', escalatedByName: '엄마' };
+  const r = meetingSchedule(points, real, at(3.5));
+  assert.equal(r.currentRank, 1);
+  assert.equal(r.points[0].at.getTime(), at(2).getTime());
+  assert.deepEqual(levelActor(real), { id: 'b', name: '엄마' });
+  // level이 없는 예전 문서는 실제로 본다
+  assert.equal(emergencyLevel({ active: true, declaredAt: T0 }), 'real');
+  assert.equal(emergencyLevel({ active: false, level: 'alert' }), null);
+});
+
+test('경계 → 실제로 바뀌면 경보 키가 달라져 다시 울린다', () => {
+  const alert = { active: true, level: 'alert', declaredAt: T0 };
+  const real = { ...alert, level: 'real', realAt: at(1) };
+  assert.notEqual(alarmKey(alert), alarmKey(real));
+  assert.equal(alarmKey({ active: false }), null);
+  assert.equal(alarmKey({ active: true, level: 'alert' }), null);
+});
+
+test('비상 기록 제목', () => {
+  assert.match(emergencyLogTitle({ action: 'declare', level: 'alert', type: 'war' }), /^경계 발령: 전쟁/);
+  assert.match(emergencyLogTitle({ action: 'declare', type: 'war' }), /^실제 상황 선언/);
+  assert.match(emergencyLogTitle({ action: 'escalate', type: 'earthquake' }), /^실제 상황 전환: 지진/);
+  assert.equal(emergencyLogTitle({ action: 'end' }), '비상 해제');
+  const tl = buildTimeline({ alarmTests: [{ id: 't', at: T0, byName: '아빠', sound: 'alert', message: '훈련' }] });
+  assert.equal(tl[0].kind, 'test');
+  assert.match(tl[0].title, /경계음/);
+});
+
+test('테스트 알람은 보낸 뒤 30분 안에만 울린다', () => {
+  assert.equal(isFreshAlarmTest({ at: T0 }, at(0.25)), true);
+  assert.equal(isFreshAlarmTest({ at: T0 }, at(1)), false);
+  assert.equal(isFreshAlarmTest({}, T0), false);
 });

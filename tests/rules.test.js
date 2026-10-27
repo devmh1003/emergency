@@ -7,7 +7,7 @@ import {
 } from '@firebase/rules-unit-testing';
 import {
   doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, writeBatch, serverTimestamp, Timestamp,
-  query, where,
+  query, where, deleteField,
 } from 'firebase/firestore';
 
 let env;
@@ -21,22 +21,42 @@ before(async () => {
 
 after(async () => { await env?.cleanup(); });
 
+const GEN = 2;
 const member = (name, extra = {}) => ({
-  name, phone: '010-0000-0000', role: 'member', active: true, declareCredits: 1, order: 1, last: null, ...extra,
+  name, phone: '010-0000-0000', role: 'member', active: true, declareCredits: 1, order: 1, last: null, gen: GEN, ...extra,
+});
+
+// 접속 코드 3가지 = 관문 계정 3개 (gate-f: 가족, gate-a: 관리자, gate-b: 백업)
+const gatesDoc = (extra = {}) => ({
+  gen: GEN,
+  familyEmail: 'gf@x', familyUid: 'gate-f',
+  adminEmail: 'ga@x', adminUid: 'gate-a',
+  backupEmail: 'gb@x', backupUid: 'gate-b',
+  setupBy: 'admin', at: Timestamp.now(),
+  ...extra,
 });
 
 beforeEach(async () => {
   await env.clearFirestore();
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();
-    await setDoc(doc(db, 'config/setup'), { by: 'admin', at: Timestamp.now() });
+    await setDoc(doc(db, 'public/gates'), gatesDoc());
+    await setDoc(doc(db, 'access/family'), { people: [{ uid: 'mom', name: '엄마', email: 'm@x', key: 'k1' }] });
+    await setDoc(doc(db, 'access/admin'), { people: [{ uid: 'admin', name: '아빠', email: 'a@x', key: 'k2' }] });
+    // 예전 방식(세대 없음)으로 남아 있는 관리자
+    await setDoc(doc(db, 'members/legacy'), member('예전 관리자', { role: 'admin', gen: 0 }));
     await setDoc(doc(db, 'members/admin'), member('아빠', { role: 'admin' }));
-    await setDoc(doc(db, 'members/mom'), member('엄마', { links: ['kid'] }));
+    const last = { type: 'safe', lat: 37.5, lng: 127, accuracy: 10, note: '집', at: Timestamp.now(), clientAt: Timestamp.now() };
+    await setDoc(doc(db, 'members/mom'), member('엄마', { links: ['kid'], last, updatedAt: Timestamp.now() }));
     await setDoc(doc(db, 'members/kid'), member('아이', { declareCredits: 0 }));
     await setDoc(doc(db, 'members/off'), member('비활성', { active: false }));
     await setDoc(doc(db, 'profiles/mom'), { bloodType: 'A+', address: '서울' });
     await setDoc(doc(db, 'profiles/kid'), { bloodType: 'O+' });
-    await setDoc(doc(db, 'emergency/current'), { active: false });
+    await setDoc(doc(db, 'emergency/current'), {
+      active: false, level: 'real', type: 'war', message: '지난 비상', declaredBy: 'admin', declaredByName: '아빠', declaredAt: Timestamp.now(),
+      realAt: Timestamp.now(), escalatedBy: 'admin', escalatedByName: '아빠', endedBy: 'admin', endedByName: '아빠', endedAt: Timestamp.now(),
+      notifiedKey: 'off:x',
+    });
     await setDoc(doc(db, 'checkins/c1'), { uid: 'kid', name: '아이', type: 'safe', lat: null, lng: null, at: Timestamp.now(), clientAt: Timestamp.now() });
   });
 });
@@ -109,9 +129,10 @@ test('위치 기록은 본인과 관리자만 본다', async () => {
 
 // ---------- 생존신고 ----------
 
-test('본인 명의 생존신고는 저장되고, 남의 명의는 거부된다', async () => {
+test('본인 명의 생존신고는 저장되고, 남의 명의·남의 이름은 거부된다', async () => {
   await assertSucceeds(checkinBatch(as('mom'), 'mom', '엄마').commit());
   await assertFails(checkinBatch(as('mom'), 'kid', '아이').commit());
+  await assertFails(checkinBatch(as('mom'), 'mom', '아빠').commit());
 });
 
 test('신고 기록은 고칠 수 없다', async () => {
@@ -155,14 +176,31 @@ test('민감 정보는 본인과 관리자만 쓸 수 있다', async () => {
 
 // ---------- 비상선언 ----------
 
-function memberDeclare(db, uid, name, credits, { decrement = true } = {}) {
+// 앱(store.js declareEmergency)과 같은 모양으로 쓴다.
+function memberDeclare(db, uid, name, credits, { decrement = true, level = 'alert', extra = {} } = {}) {
   const b = writeBatch(db);
   b.set(doc(db, 'emergency/current'), {
-    active: true, type: 'earthquake', message: '', declaredBy: uid, declaredByName: name, declaredAt: serverTimestamp(),
+    active: true, level, type: 'earthquake', message: '', declaredBy: uid, declaredByName: name, declaredAt: serverTimestamp(),
+    realAt: level === 'real' ? serverTimestamp() : deleteField(),
+    escalatedBy: deleteField(),
+    escalatedByName: deleteField(),
+    ...extra,
   }, { merge: true });
   if (decrement) b.update(doc(db, `members/${uid}`), { declareCredits: credits - 1 });
   return b;
 }
+
+// 앱(store.js escalateEmergency)과 같은 모양으로 쓴다.
+function memberEscalate(db, uid, name, credits, { decrement = true, extra = {} } = {}) {
+  const b = writeBatch(db);
+  b.update(doc(db, 'emergency/current'), {
+    level: 'real', realAt: serverTimestamp(), escalatedBy: uid, escalatedByName: name, ...extra,
+  });
+  if (decrement) b.update(doc(db, `members/${uid}`), { declareCredits: credits - 1 });
+  return b;
+}
+
+const setEmergency = (data) => env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'emergency/current'), data));
 
 test('일반 가족은 선언권 1회를 차감하면서 선언할 수 있다', async () => {
   await assertSucceeds(memberDeclare(as('mom'), 'mom', '엄마', 1).commit());
@@ -187,18 +225,91 @@ test('남의 이름으로 선언하거나, 이미 비상 중일 때 덮어쓸 �
   await assertFails(memberDeclare(as('mom'), 'mom', '엄마', 1).commit());
 });
 
+test('일반 가족은 실제 상황도 바로 선언할 수 있고, 경계에는 실제 시각을 넣을 수 없다', async () => {
+  await assertFails(memberDeclare(as('mom'), 'mom', '엄마', 1, { level: 'alert', extra: { realAt: serverTimestamp() } }).commit());
+  await assertFails(memberDeclare(as('mom'), 'mom', '엄마', 1, { level: 'severe' }).commit());
+  await assertSucceeds(memberDeclare(as('mom'), 'mom', '엄마', 1, { level: 'real' }).commit());
+});
+
+test('경계 → 실제 전환: 관리자는 언제든, 일반 가족은 선언권을 쓰며 한 번', async () => {
+  await setEmergency({
+    active: true, level: 'alert', type: 'war', message: '대비하세요', declaredBy: 'admin', declaredByName: '아빠', declaredAt: Timestamp.now(),
+    endedBy: 'admin', endedByName: '아빠', endedAt: Timestamp.now(), notifiedKey: 'alert:x',
+  });
+  // 선언권 없음 / 차감 안 함 / 남의 이름 / 발령자 바꾸기는 거부
+  await assertFails(memberEscalate(as('kid'), 'kid', '아이', 0).commit());
+  await assertFails(memberEscalate(as('mom'), 'mom', '엄마', 1, { decrement: false }).commit());
+  await assertFails(memberEscalate(as('mom'), 'mom', '아빠', 1).commit());
+  await assertFails(memberEscalate(as('mom'), 'mom', '엄마', 1, { extra: { declaredBy: 'mom' } }).commit());
+  await assertSucceeds(memberEscalate(as('mom'), 'mom', '엄마', 1, { extra: { message: '실제입니다' } }).commit());
+  // 이미 실제면 다시 전환할 수 없다
+  await env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'members/kid'), { declareCredits: 1 }));
+  await assertFails(memberEscalate(as('kid'), 'kid', '아이', 1).commit());
+  // 관리자는 선언권 없이 전환
+  await setEmergency({ active: true, level: 'alert', type: 'war', declaredBy: 'mom', declaredByName: '엄마', declaredAt: Timestamp.now() });
+  await assertSucceeds(memberEscalate(as('admin'), 'admin', '아빠', 0, { decrement: false }).commit());
+});
+
+test('경보 단계 값은 경계·실제만 허용한다', async () => {
+  await assertFails(setDoc(doc(as('admin'), 'emergency/current'), { active: true, level: 'severe', declaredBy: 'admin' }));
+  await assertSucceeds(setDoc(doc(as('admin'), 'emergency/current'), { active: true, level: 'alert', declaredBy: 'admin', declaredAt: serverTimestamp() }));
+});
+
 test('비상 해제는 관리자만 할 수 있다', async () => {
   await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'emergency/current'), { active: true, declaredBy: 'admin' }));
   await assertFails(setDoc(doc(as('mom'), 'emergency/current'), { active: false }, { merge: true }));
   await assertSucceeds(setDoc(doc(as('admin'), 'emergency/current'), { active: false, endedBy: 'admin', endedAt: serverTimestamp() }, { merge: true }));
 });
 
-test('선언 기록: 가족은 선언 기록만, 해제 기록은 관리자만 남긴다', async () => {
-  const log = (uid, name, action) => setDoc(doc(collection(as(uid), 'emergencyLog')), { action, by: uid, byName: name, at: serverTimestamp() });
-  await assertSucceeds(log('mom', '엄마', 'declare'));
-  await assertFails(log('mom', '엄마', 'end'));
-  await assertSucceeds(log('admin', '아빠', 'end'));
-  await assertFails(setDoc(doc(collection(as('mom'), 'emergencyLog')), { action: 'declare', by: 'admin', byName: '아빠', at: serverTimestamp() }));
+test('비상 기록은 실제로 발령·전환·해제하는 같은 일괄 쓰기에서, 본인 이름으로만 남긴다', async () => {
+  const logRef = (db) => doc(collection(db, 'emergencyLog'));
+  const entry = (uid, name, action, extra = {}) => ({ action, by: uid, byName: name, at: serverTimestamp(), ...extra });
+  // 비상 문서는 그대로 두고 기록만 남기기 → 거부 (가짜 기록)
+  await assertFails(setDoc(logRef(as('mom')), entry('mom', '엄마', 'declare')));
+  await assertFails(setDoc(logRef(as('admin')), entry('admin', '아빠', 'end')));
+  // 발령과 함께 → 허용, 이름을 속이면 거부
+  const declareWithLog = (name) => {
+    const db = as('mom');
+    const b = memberDeclare(db, 'mom', '엄마', 1);
+    b.set(logRef(db), entry('mom', name, 'declare', { level: 'alert', type: 'earthquake', message: '' }));
+    return b.commit();
+  };
+  await assertFails(declareWithLog('아빠'));
+  await assertSucceeds(declareWithLog('엄마'));
+  // 해제는 관리자만, 해제하는 일괄 쓰기에서
+  const endWithLog = (uid, name) => {
+    const db = as(uid);
+    const b = writeBatch(db);
+    b.set(doc(db, 'emergency/current'), { active: false, endedBy: uid, endedByName: name, endedAt: serverTimestamp() }, { merge: true });
+    b.set(logRef(db), entry(uid, name, 'end'));
+    return b.commit();
+  };
+  await assertFails(endWithLog('kid', '아이'));
+  await assertSucceeds(endWithLog('admin', '아빠'));
+});
+
+// ---------- 테스트 알람 ----------
+
+test('테스트 알람은 관리자만 보내고, 가족은 본인 확인만 남긴다', async () => {
+  const testDoc = (by, name, extra = {}) => ({ by, byName: name, at: serverTimestamp(), message: '훈련', sound: 'real', ...extra });
+  await assertFails(setDoc(doc(as('mom'), 'alarmTests/t0'), testDoc('mom', '엄마')));
+  await assertFails(setDoc(doc(as('admin'), 'alarmTests/t0'), testDoc('admin', '아빠', { sound: 'loud' })));
+  await assertSucceeds(setDoc(doc(as('admin'), 'alarmTests/t1'), testDoc('admin', '아빠')));
+  await assertFails(updateDoc(doc(as('admin'), 'alarmTests/t1'), { message: '바꿈' }));
+  await assertSucceeds(getDoc(doc(as('kid'), 'alarmTests/t1')));
+  await assertFails(getDoc(doc(as('stranger'), 'alarmTests/t1')));
+
+  const ack = (uid, target, name) => setDoc(doc(as(uid), `alarmTests/t1/acks/${target}`), { name, at: serverTimestamp() });
+  await assertSucceeds(ack('mom', 'mom', '엄마'));
+  await assertFails(ack('mom', 'kid', '아이'));
+  await assertFails(ack('kid', 'kid', '엄마'));
+  await assertFails(ack('off', 'off', '비활성'));
+  await assertFails(setDoc(doc(as('kid'), 'alarmTests/none/acks/kid'), { name: '아이', at: serverTimestamp() }));
+  await assertFails(setDoc(doc(as('mom'), 'alarmTests/t1/acks/mom'), { name: '엄마', at: serverTimestamp() }, { merge: true }));
+  // 누가 확인했는지는 관리자만 본다 (본인 것은 본인도)
+  await assertSucceeds(getDocs(collection(as('admin'), 'alarmTests/t1/acks')));
+  await assertSucceeds(getDoc(doc(as('mom'), 'alarmTests/t1/acks/mom')));
+  await assertFails(getDoc(doc(as('kid'), 'alarmTests/t1/acks/mom')));
 });
 
 // ---------- 집합장소·프로토콜·체크리스트 ----------
@@ -216,12 +327,14 @@ test('집합장소는 관리자만, 1~10순위만 정할 수 있다', async () =
   await assertSucceeds(getDoc(doc(as('mom'), 'meetingPoints/1')));
 });
 
-test('집합장소 기록은 본인 명의로 누구나 남긴다', async () => {
-  const log = (uid, by) => setDoc(doc(collection(as(uid), 'meetingLogs')), {
-    rank: 1, uid: by, name: '엄마', message: '도착', lat: null, lng: null, accuracy: null, at: serverTimestamp(), clientAt: Timestamp.now(),
+test('집합장소 기록은 본인 명의·본인 이름으로 누구나 남기고, 위치 좌표는 남기지 않는다', async () => {
+  const log = (uid, by, name = '엄마', extra = {}) => setDoc(doc(collection(as(uid), 'meetingLogs')), {
+    rank: 1, uid: by, name, message: '도착', at: serverTimestamp(), clientAt: Timestamp.now(), ...extra,
   });
   await assertSucceeds(log('mom', 'mom'));
   await assertFails(log('mom', 'kid'));
+  await assertFails(log('mom', 'mom', '아빠'));
+  await assertFails(log('mom', 'mom', '엄마', { lat: 37.5, lng: 127 }));
 });
 
 test('프로토콜은 관리자만 고친다', async () => {
@@ -247,23 +360,81 @@ test('알림 토큰은 본인 것만 등록·조회한다', async () => {
 
 // ---------- 초기 설정 ----------
 
-function bootstrap(uid) {
+// 앱(store.js setupAccess)과 같은 모양: 관문 문서 + 첫 관리자 + 이름 목록을 한 번에
+function bootstrap(uid, gen = GEN + 1) {
   const db = as(uid);
   const b = writeBatch(db);
-  b.set(doc(db, `members/${uid}`), member('첫 관리자', { role: 'admin', order: 0 }));
-  b.set(doc(db, 'config/setup'), { by: uid, at: serverTimestamp() });
+  b.set(doc(db, `members/${uid}`), member('첫 관리자', { role: 'admin', order: 0, gen }));
+  b.set(doc(db, 'public/gates'), {
+    gen, familyEmail: 'f2@x', familyUid: `${uid}-f`, adminEmail: 'a2@x', adminUid: `${uid}-a`, backupEmail: 'b2@x', backupUid: `${uid}-b`,
+    setupBy: uid, at: serverTimestamp(),
+  });
+  b.set(doc(db, 'access/admin'), { people: [{ uid, name: '첫 관리자', email: 'o@x', key: 'k' }] });
+  b.set(doc(db, 'access/family'), { people: [] });
   return b.commit();
 }
 
-test('초기 설정은 한 번만 할 수 있다', async () => {
-  await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore(), 'config/setup')));
+test('초기 설정은 관문 문서가 없을 때 한 번만 할 수 있고, 예전 계정은 새 세대에서 막힌다', async () => {
+  await assertFails(bootstrap('attacker'));
+  await env.withSecurityRulesDisabled((ctx) => deleteDoc(doc(ctx.firestore(), 'public/gates')));
+  // 관문 문서가 없으면 아무도 가족 데이터에 접근 못 한다
+  await assertFails(getDoc(doc(as('admin'), 'emergency/current')));
   await assertSucceeds(bootstrap('owner'));
   await assertFails(bootstrap('attacker'));
+  // 예전 세대의 관리자는 더 이상 관리자가 아니다
+  await assertFails(getDocs(collection(as('admin'), 'members')));
+  await assertSucceeds(getDocs(collection(as('owner'), 'members')));
 });
 
-test('초기 설정 없이 스스로 관리자가 될 수 없다', async () => {
-  await assertFails(bootstrap('attacker'));
+test('스스로 관리자가 될 수 없고, 세대가 없는 예전 계정은 접근하지 못한다', async () => {
   await assertFails(setDoc(doc(as('attacker'), 'members/attacker'), member('해커', { role: 'admin' })));
+  await assertFails(getDocs(collection(as('legacy'), 'members')));
+  await assertFails(getDoc(doc(as('legacy'), 'emergency/current')));
+});
+
+test('관문 문서는 누구나 읽고, 관리자만 코드를 바꾸며 세대는 못 바꾼다', async () => {
+  await assertSucceeds(getDoc(doc(anon(), 'public/gates')));
+  const change = (uid, data) => setDoc(doc(as(uid), 'public/gates'), { ...data, at: serverTimestamp() }, { merge: true });
+  await assertFails(change('mom', { familyEmail: 'new@x', familyUid: 'gate-f2' }));
+  await assertSucceeds(change('admin', { familyEmail: 'new@x', familyUid: 'gate-f2' }));
+  await assertFails(change('admin', { gen: GEN + 5 }));
+  await assertFails(change('admin', { familyUid: 'gate-a' }));
+});
+
+test('가족 코드로는 가족 목록만, 관리자 코드로는 관리자 목록만 본다 (가족 데이터는 못 본다)', async () => {
+  await assertSucceeds(getDoc(doc(as('gate-f'), 'access/family')));
+  await assertFails(getDoc(doc(as('gate-f'), 'access/admin')));
+  await assertSucceeds(getDoc(doc(as('gate-a'), 'access/admin')));
+  await assertFails(getDoc(doc(as('gate-a'), 'access/family')));
+  await assertFails(getDoc(doc(as('mom'), 'access/family')));
+  await assertSucceeds(getDoc(doc(as('admin'), 'access/family')));
+  await assertFails(getDoc(doc(as('gate-f'), 'members/mom')));
+  await assertFails(getDoc(doc(as('gate-a'), 'emergency/current')));
+  await assertFails(setDoc(doc(as('gate-f'), 'access/family'), { people: [] }));
+});
+
+test('백업 코드로는 관리자 코드 교체와 관리자 추가만 할 수 있다', async () => {
+  const gb = as('gate-b');
+  await assertSucceeds(setDoc(doc(gb, 'public/gates'), { adminEmail: 'ga2@x', adminUid: 'gate-a2', at: serverTimestamp() }, { merge: true }));
+  await assertFails(setDoc(doc(gb, 'public/gates'), { familyEmail: 'gf2@x', familyUid: 'gate-f2', at: serverTimestamp() }, { merge: true }));
+  await assertSucceeds(setDoc(doc(gb, 'members/newadmin'), member('새 관리자', { role: 'admin' })));
+  await assertFails(setDoc(doc(gb, 'members/newkid'), member('새 가족')));
+  await assertSucceeds(setDoc(doc(gb, 'access/admin'), { people: [] }));
+  await assertFails(setDoc(doc(gb, 'access/family'), { people: [] }));
+  await assertFails(getDocs(collection(gb, 'members')));
+  await assertFails(getDoc(doc(gb, 'profiles/mom')));
+  await assertSucceeds(setDoc(doc(gb, 'auditLog/b1'), { action: 'backup.adminCode', detail: '', by: 'gate-b', byName: '백업 코드', at: serverTimestamp() }));
+  await assertFails(setDoc(doc(gb, 'auditLog/b2'), { action: 'member.delete', detail: '', by: 'gate-b', byName: '백업 코드', at: serverTimestamp() }));
+});
+
+test('새 가족은 지금 세대로만 만든다', async () => {
+  await assertFails(setDoc(doc(as('admin'), 'members/new1'), member('새 가족', { gen: 0 })));
+  await assertSucceeds(setDoc(doc(as('admin'), 'members/new2'), member('새 가족')));
+});
+
+test('체크리스트 값은 참/거짓만', async () => {
+  await assertSucceeds(setDoc(doc(as('mom'), 'checklists/mom'), { done: { a: true, b: false } }));
+  await assertFails(setDoc(doc(as('mom'), 'checklists/mom'), { done: { a: 'x'.repeat(1000) } }));
 });
 
 // ---------- 로그인 아이디·관리 기록·연락처 ----------

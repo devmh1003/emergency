@@ -3,10 +3,9 @@ import { initializeApp, deleteApp } from 'https://www.gstatic.com/firebasejs/13.
 import {
   initializeAuth, indexedDBLocalPersistence, browserLocalPersistence, inMemoryPersistence,
   connectAuthEmulator, onAuthStateChanged, signInWithEmailAndPassword, signOut,
-  createUserWithEmailAndPassword, updatePassword, EmailAuthProvider, reauthenticateWithCredential,
-  sendPasswordResetEmail,
+  createUserWithEmailAndPassword,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
-import { loginEmail } from './logic.js';
+import { t } from './i18n.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache,
   connectFirestoreEmulator,
@@ -44,53 +43,68 @@ export function watchAuth(cb) {
   return onAuthStateChanged(auth, cb);
 }
 
-/** 아이디(또는 예전 방식의 이메일)와 비밀코드로 로그인 */
-export function login(loginId, code) {
-  return signInWithEmailAndPassword(auth, loginEmail(loginId, config.firebase.projectId), code);
+// ---------- 접속 코드 ----------
+// 접속 코드 3가지(가족·관리자·백업)는 각각 "관문 계정"의 비밀번호다.
+// 관문 계정으로 코드를 확인하면 이름 목록이 보이고, 이름을 고르면 그 사람 계정(무작위 열쇠)으로 로그인한다.
+// 계정 이메일은 메일이 오가지 않는 내부 주소다: g-family-xxxx@프로젝트.firebaseapp.com
+
+/** 추측할 수 없는 무작위 문자열 (영문 소문자 + 숫자) */
+export function randomToken(length = 24) {
+  const chars = 'abcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
+export function newAccountEmail(prefix) {
+  return `${prefix}-${randomToken(12)}@${config.firebase.projectId}.firebaseapp.com`;
+}
+
+export function signIn(email, password) {
+  return signInWithEmailAndPassword(auth, email, password);
 }
 
 export function logout() {
   return signOut(auth);
 }
 
-/** 예전 방식(실제 이메일) 계정만 재설정 메일을 받을 수 있다. 아이디 계정은 관리자가 초기화한다. */
-export function resetPasswordEmail(email) {
-  return sendPasswordResetEmail(auth, email.trim());
-}
-
-/** 비밀코드 바꾸기 (현재 비밀코드로 본인 확인 후) */
-export async function changePassword(currentPassword, newPassword) {
-  const user = auth.currentUser;
-  await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword));
-  await updatePassword(user, newPassword);
-}
-
-/** 첫 관리자가 스스로 계정을 만든다 (초기 설정 화면에서만 쓴다). */
-export function createOwnAccount(loginId, code) {
-  return createUserWithEmailAndPassword(auth, loginEmail(loginId, config.firebase.projectId), code);
-}
-
-/**
- * 관리자가 가족 계정을 만든다.
- * 같은 앱 인스턴스로 만들면 관리자가 새 계정으로 로그인돼 버리므로, 잠깐 쓰는 별도 인스턴스를 만든다.
- */
-export async function createAccountForOther(loginId, code) {
-  const secondary = initializeApp(config.firebase, `create-${Date.now()}`);
+/** 지금 로그인을 건드리지 않도록 잠깐 쓰는 별도 인스턴스에서 인증 작업을 한다. */
+async function withSecondaryAuth(fn) {
+  const secondary = initializeApp(config.firebase, `tmp-${randomToken(8)}`);
   try {
     const secondaryAuth = initializeAuth(secondary, { persistence: inMemoryPersistence });
     if (useEmulators) connectAuthEmulator(secondaryAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, loginEmail(loginId, config.firebase.projectId), code);
-    const uid = cred.user.uid;
-    await signOut(secondaryAuth);
-    return uid;
+    return await fn(secondaryAuth);
   } finally {
     await deleteApp(secondary);
   }
 }
 
+/** 새 계정을 만들고 uid를 돌려준다 (지금 로그인한 사람은 그대로). */
+export function createAccount(email, password) {
+  return withSecondaryAuth(async (a) => {
+    const cred = await createUserWithEmailAndPassword(a, email, password);
+    await signOut(a);
+    return cred.user.uid;
+  });
+}
+
+/** 이 이메일·비밀번호가 맞는지만 확인한다 (지금 로그인한 사람은 그대로). */
+export function credentialWorks(email, password) {
+  return withSecondaryAuth(async (a) => {
+    try {
+      await signInWithEmailAndPassword(a, email, password);
+      await signOut(a);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Cloudflare Worker 호출. 로그인한 사용자의 ID 토큰으로 본인임을 증명한다. */
 export async function callWorker(path, body = {}) {
-  if (!config.workerUrl) throw new Error('알림 서버(Worker) 주소가 설정되지 않았습니다.');
+  if (!config.workerUrl) throw new Error(t('알림 서버(Worker) 주소가 설정되지 않았습니다.'));
   const token = await auth.currentUser.getIdToken();
   const res = await fetch(config.workerUrl.replace(/\/$/, '') + path, {
     method: 'POST',
@@ -98,25 +112,25 @@ export async function callWorker(path, body = {}) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `서버 오류 (${res.status})`);
+  if (!res.ok) throw new Error(data.error || t('서버 오류 ({status})', { status: res.status }));
   return data;
 }
 
 const AUTH_MESSAGES = {
-  'auth/invalid-credential': '아이디 또는 비밀코드가 맞지 않습니다.',
-  'auth/wrong-password': '비밀코드가 맞지 않습니다.',
-  'auth/user-not-found': '등록되지 않은 아이디입니다.',
-  'auth/invalid-email': '아이디 형식이 올바르지 않습니다.',
-  'auth/missing-password': '비밀코드를 입력하세요.',
+  'auth/invalid-credential': '접속 코드가 맞지 않습니다.',
+  'auth/wrong-password': '접속 코드가 맞지 않습니다.',
+  'auth/user-not-found': '접속 코드가 맞지 않습니다.',
+  'auth/invalid-email': '계정 정보가 올바르지 않습니다.',
+  'auth/missing-password': '접속 코드를 입력하세요.',
   'auth/too-many-requests': '시도가 너무 많습니다. 잠시 후 다시 시도하세요.',
   'auth/network-request-failed': '인터넷 연결을 확인하세요.',
-  'auth/email-already-in-use': '이미 사용 중인 아이디입니다.',
-  'auth/weak-password': '비밀코드는 6자 이상이어야 합니다.',
+  'auth/email-already-in-use': '이미 있는 계정입니다. 다시 시도하세요.',
+  'auth/weak-password': '접속 코드는 6자 이상이어야 합니다.',
   'auth/requires-recent-login': '보안을 위해 다시 로그인한 뒤 시도하세요.',
   'permission-denied': '권한이 없습니다.',
   unavailable: '서버에 연결할 수 없습니다. 연결되면 자동으로 다시 시도합니다.',
 };
 
 export function errorMessage(err) {
-  return AUTH_MESSAGES[err?.code] || err?.message || String(err);
+  return AUTH_MESSAGES[err?.code] ? t(AUTH_MESSAGES[err.code]) : err?.message || String(err);
 }

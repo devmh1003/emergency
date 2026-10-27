@@ -1,5 +1,6 @@
 // 화면을 만드는 작은 도구들.
 // 사용자 입력은 항상 텍스트 노드로 넣는다. innerHTML 은 쓰지 않는다 (스크립트 삽입 공격 방지).
+import { t } from './i18n.js';
 
 /**
  * h('button', { class: 'btn', onClick: fn }, '텍스트', 자식요소...)
@@ -81,6 +82,10 @@ export function formData(form) {
   const out = {};
   for (const el of form.elements) {
     if (!el.name) continue;
+    if (el.type === 'radio') {
+      if (el.checked) out[el.name] = el.value;
+      continue;
+    }
     out[el.name] = el.type === 'checkbox' ? el.checked : el.value.trim();
   }
   return out;
@@ -115,9 +120,9 @@ export function pageHeader(title, ...rest) {
   let opts = {};
   if (rest[0] && !(rest[0] instanceof Node) && typeof rest[0] === 'object') opts = rest.shift();
   const actions = rest.filter(Boolean);
-  const crumbs = [{ label: '홈', href: '#/' }, ...(opts.crumbs || [])];
+  const crumbs = [{ label: t('홈'), href: '#/' }, ...(opts.crumbs || [])];
   return h('div', null,
-    h('nav', { class: 'breadcrumb', 'aria-label': '현재 위치' },
+    h('nav', { class: 'breadcrumb', 'aria-label': t('현재 위치') },
       crumbs.map((c) => [h('a', { href: c.href }, c.label), h('span', { 'aria-hidden': 'true' }, '›')]),
       h('span', { 'aria-current': 'page' }, typeof title === 'string' ? title : '')),
     h('header', { class: 'page-header' },
@@ -165,3 +170,17 @@ export const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
   || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
 export const isStandalone = window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// ---------- 글자 크기 (이 휴대폰에만 저장) ----------
+
+const FONT_KEY = 'family.fontScale';
+export const FONT_SCALES = [['md', '보통'], ['lg', '크게'], ['xl', '아주 크게']];
+
+export function savedFontScale() {
+  try { return localStorage.getItem(FONT_KEY) || 'md'; } catch { return 'md'; }
+}
+
+export function applyFontScale(scale) {
+  document.documentElement.dataset.fontScale = scale;
+  try { localStorage.setItem(FONT_KEY, scale); } catch { /* 무시 */ }
+}

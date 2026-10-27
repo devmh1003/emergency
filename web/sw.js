@@ -20,12 +20,21 @@ const APP_FILES = [
   'js/dom.js',
   'js/firebase.js',
   'js/geo.js',
+  'js/i18n.js',
+  'js/i18n/en-admin.js',
+  'js/i18n/en-alarm.js',
+  'js/i18n/en-app.js',
+  'js/i18n/en-core.js',
+  'js/i18n/en-home.js',
   'js/logic.js',
   'js/map.js',
+  'js/offline.js',
   'js/push.js',
   'js/siren.js',
   'js/store.js',
+  'js/data/contacts.en.js',
   'js/data/contacts.js',
+  'js/data/protocols.en.js',
   'js/data/protocols.js',
   'js/views/admin.js',
   'js/views/auth.js',
@@ -84,7 +93,9 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const app = await caches.open(APP_CACHE);
-    await app.addAll(APP_FILES);
+    // 브라우저의 HTTP 캐시(GitHub Pages는 10분)를 건너뛰고 서버에서 새로 받는다.
+    // 그러지 않으면 새 버전 이름으로 옛 CSS·JS가 저장되어 화면이 깨진 채로 남는다.
+    await app.addAll(APP_FILES.map((url) => new Request(url, { cache: 'reload' })));
     const libs = await caches.open(LIB_CACHE);
     // 외부 라이브러리는 하나가 실패해도 설치를 막지 않는다.
     await Promise.all(LIB_FILES.map(async (url) => {
@@ -114,15 +125,16 @@ async function trimTiles() {
   for (let i = 0; i < keys.length - MAX_TILES; i++) await cache.delete(keys[i]);
 }
 
-// 저장본을 먼저 보여주고, 뒤에서 새 버전을 받아 둔다.
-async function staleWhileRevalidate(request, cacheName) {
-  const cache = await caches.open(cacheName);
+// 앱 파일은 이 버전을 설치할 때 한꺼번에 저장한 것만 쓴다. 버전이 섞이면 화면이 깨진다.
+async function appFile(request) {
+  const cache = await caches.open(APP_CACHE);
   const cached = await cache.match(request, { ignoreSearch: true });
-  const network = fetch(request).then((res) => {
-    if (res.ok) cache.put(request, res.clone());
-    return res;
-  }).catch(() => null);
-  return cached || (await network) || Response.error();
+  if (cached) return cached;
+  try {
+    return await fetch(request);
+  } catch {
+    return Response.error();
+  }
 }
 
 // 버전이 고정된 파일은 한 번 받으면 바뀌지 않는다.
@@ -146,13 +158,51 @@ async function cacheFirst(request, cacheName, onStore) {
 async function networkFirstPage(request) {
   const cache = await caches.open(APP_CACHE);
   try {
-    const res = await fetch(request);
-    if (res.ok) cache.put('index.html', res.clone());
+    // HTTP 캐시에 남은 옛 화면이 아니라 서버에 새 버전이 있는지 확인한다.
+    const res = await fetch(request.url, { cache: 'no-cache', credentials: 'same-origin' });
+    // 앱 화면(사이트 첫 주소나 index.html)일 때만 오프라인용으로 저장한다.
+    // 다른 파일 주소를 직접 열었을 때 그 내용이 앱 화면 자리에 저장되면 오프라인에서 앱이 안 열린다.
+    const path = new URL(request.url).pathname;
+    const scope = new URL(self.registration.scope).pathname;
+    const isAppPage = path === scope || path === `${scope}index.html`;
+    if (res.ok && !res.redirected && isAppPage && (res.headers.get('content-type') || '').includes('text/html')) {
+      cache.put('index.html', res.clone());
+    }
+    if (res.redirected) return Response.redirect(res.url, 302);
     return res;
   } catch {
     return (await cache.match('index.html')) || (await cache.match('./')) || Response.error();
   }
 }
+
+// 오프라인 준비: 앱이 집합장소·내 위치 주변 지도 타일 주소를 보내면 미리 받아 둔다 (js/offline.js).
+// OpenStreetMap 타일 주소만 받고, 한 번에 600장까지만 받는다.
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'precache-tiles') return;
+  const urls = (Array.isArray(event.data.urls) ? event.data.urls : [])
+    .filter((u) => {
+      try { return new URL(u).hostname === 'tile.openstreetmap.org'; } catch { return false; }
+    })
+    .slice(0, 600);
+  event.waitUntil((async () => {
+    const cache = await caches.open(TILE_CACHE);
+    let added = 0;
+    for (const url of urls) {
+      if (await cache.match(url)) continue;
+      try {
+        // CORS로 받는다 (opaque 응답은 저장 공간을 크게 차지한다). 지도(map.js)도 crossOrigin으로 불러온다.
+        const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
+        if (res.ok) {
+          await cache.put(url, res);
+          added++;
+        }
+      } catch { /* 인터넷이 끊기면 다음에 다시 */ }
+    }
+    await trimTiles();
+    const total = (await cache.keys()).length;
+    event.ports[0]?.postMessage({ added, total });
+  })());
+});
 
 // "evilgoogleapis.com" 같은 다른 도메인이 걸리지 않도록 점(.) 경계까지 확인한다.
 function isDomainOrSub(hostname, domain) {
@@ -164,6 +214,11 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
+  // 글꼴 CSS(fonts.googleapis.com)는 버전이 고정된 라이브러리처럼 저장한다.
+  if (url.hostname === 'fonts.googleapis.com') {
+    event.respondWith(cacheFirst(request, LIB_CACHE));
+    return;
+  }
   // Firebase 데이터·인증·Worker 요청은 저장하지 않는다 (Firestore가 자체 오프라인 저장소를 쓴다).
   if (isDomainOrSub(url.hostname, 'googleapis.com') || isDomainOrSub(url.hostname, 'workers.dev')) return;
 
@@ -172,12 +227,12 @@ self.addEventListener('fetch', (event) => {
     return;
   }
   // 버전이 고정된 라이브러리와 글꼴 (글꼴 파일은 처음 쓸 때 저장된다)
-  if (['www.gstatic.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) {
+  if (['www.gstatic.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.gstatic.com'].includes(url.hostname)) {
     event.respondWith(cacheFirst(request, LIB_CACHE));
     return;
   }
   if (url.origin === self.location.origin) {
     if (request.mode === 'navigate') event.respondWith(networkFirstPage(request));
-    else event.respondWith(staleWhileRevalidate(request, APP_CACHE));
+    else event.respondWith(appFile(request));
   }
 });

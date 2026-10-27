@@ -2,7 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
 import { fromDocument } from '../src/firestore.js';
-import worker, { notificationKey, notificationContent } from '../src/index.js';
+import worker, { notificationKey, notificationContent, pickTokens } from '../src/index.js';
 
 const PROJECT = 'demo-family';
 const enc = new TextEncoder();
@@ -75,11 +75,22 @@ test('Firestore 문서 해석', () => {
 
 test('알림은 비상 상태마다 다른 키를 가진다', () => {
   assert.equal(notificationKey(null), null);
-  assert.equal(notificationKey({ active: true, declaredAt: 'T1' }), 'on:T1');
+  assert.equal(notificationKey({ active: true, declaredAt: 'T1' }), 'real:T1');
   assert.equal(notificationKey({ active: false, endedAt: 'T2' }), 'off:T2');
   assert.equal(notificationKey({ active: false }), null);
   assert.match(notificationContent({ active: true, type: 'earthquake', declaredByName: '아빠' }).title, /지진/);
   assert.match(notificationContent({ active: false, endedByName: '엄마' }).body, /엄마/);
+});
+
+test('경계 → 실제로 바뀌면 알림 키와 내용이 달라진다', () => {
+  const alert = { active: true, level: 'alert', type: 'war', declaredAt: 'T1', declaredByName: '아빠' };
+  const real = { ...alert, level: 'real', realAt: 'T3', escalatedByName: '엄마' };
+  assert.equal(notificationKey(alert), 'alert:T1');
+  assert.equal(notificationKey(real), 'real:T3');
+  assert.match(notificationContent(alert).title, /경계/);
+  assert.match(notificationContent(real).title, /실제/);
+  assert.match(notificationContent(real).body, /^엄마:/);
+  assert.match(notificationContent({ active: true, type: 'tsunami' }).title, /지진해일/);
 });
 
 // ---------- 요청 처리 (Google API는 가짜로 대체) ----------
@@ -101,8 +112,10 @@ beforeEach(async () => {
   realFetch = globalThis.fetch;
   calls = [];
   db = {
-    'members/user-1': { name: '엄마', active: true, role: 'member' },
-    'members/user-2': { name: '아빠', active: true, role: 'admin' },
+    'public/gates': { gen: 5 },
+    'members/user-1': { name: '엄마', active: true, role: 'member', gen: 5 },
+    'members/user-2': { name: '아빠', active: true, role: 'admin', gen: 5 },
+    'members/legacy': { name: '예전 관리자', active: true, role: 'admin' },
     'emergency/current': { active: true, type: 'war', declaredAt: 'T1', declaredByName: '아빠' },
   };
   globalThis.fetch = async (input, init = {}) => {
@@ -179,11 +192,48 @@ test('비상 알림은 활성 가족의 기기에만, 한 번만 보낸다', asy
   assert.match(fields.detail.stringValue, /1건 성공/);
   assert.ok(fields.at.timestampValue);
 
-  db['emergency/current'].notifiedKey = 'on:T1';
+  db['emergency/current'].notifiedKey = 'real:T1';
   calls = [];
   const again = await post('/notify', { token: await makeToken() });
   assert.equal(again.data.sent, 0);
   assert.equal(calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/')).length, 0);
+});
+
+test('테스트 알람은 관리자만, 테스트마다 한 번만 보낸다', async () => {
+  db['alarmTests/t1'] = { by: 'user-2', byName: '아빠', message: '훈련입니다' };
+  assert.equal((await post('/drill', { token: await makeToken(), body: { id: 't1' } })).status, 403);
+  const admin = await makeToken({ sub: 'user-2' });
+  assert.equal((await post('/drill', { token: admin, body: { id: '../x' } })).status, 400);
+  assert.equal((await post('/drill', { token: admin, body: { id: 'none' } })).status, 404);
+  calls = [];
+  const r = await post('/drill', { token: admin, body: { id: 't1' } });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.sent, 1);
+  const fcm = calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/'));
+  const msg = JSON.parse(fcm[0].body).message;
+  assert.match(msg.notification.title, /테스트/);
+  assert.equal(msg.data.kind, 'test');
+  const log = calls.find((c) => c.method === 'POST' && c.url.endsWith('/documents/auditLog'));
+  assert.equal(JSON.parse(log.body).fields.action.stringValue, 'notify.drill');
+
+  db['alarmTests/t1'].notifiedKey = 'sent';
+  calls = [];
+  const again = await post('/drill', { token: admin, body: { id: 't1' } });
+  assert.equal(again.data.sent, 0);
+  assert.equal(calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/')).length, 0);
+});
+
+test('예전 방식(세대가 다른) 계정은 Worker를 쓸 수 없다', async () => {
+  const r = await post('/notify', { token: await makeToken({ sub: 'legacy' }) });
+  assert.equal(r.status, 403);
+});
+
+test('사람마다 최근 기기 2대에만 보낸다 (토큰을 잔뜩 등록해 발송을 막을 수 없다)', () => {
+  const junk = Array.from({ length: 60 }, (_, i) => ({ id: `junk-${i}`, uid: 'spammer', at: `2026-10-27T00:00:${String(i).padStart(2, '0')}Z` }));
+  const picked = pickTokens([...junk, { id: 'mom-phone', uid: 'mom', at: '2026-10-01T00:00:00Z' }]);
+  assert.equal(picked.filter((t) => t.uid === 'spammer').length, 2);
+  assert.ok(picked.some((t) => t.id === 'mom-phone'));
+  assert.deepEqual(picked.filter((t) => t.uid === 'spammer').map((t) => t.id), ['junk-59', 'junk-58']);
 });
 
 test('일반 가족은 관리자 작업을 할 수 없다', async () => {

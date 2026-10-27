@@ -1,6 +1,7 @@
 // 지도 (Leaflet + OpenStreetMap). 본 지도 타일은 서비스 워커가 저장해 오프라인에서도 보인다.
 import { h } from './dom.js';
 import { hasLocation } from './logic.js';
+import { t } from './i18n.js';
 
 const SEOUL = [37.5665, 126.978];
 
@@ -58,7 +59,7 @@ export function mapView({ points = [], height = 260, onPick, line = false } = {}
     }
     if (!window.L) {
       el.classList.add('map-unavailable');
-      el.textContent = '지도를 불러올 수 없습니다 (오프라인). 주소와 길찾기 링크를 이용하세요.';
+      el.textContent = t('지도를 불러올 수 없습니다 (오프라인). 주소와 길찾기 링크를 이용하세요.');
       return;
     }
     map = window.L.map(el, { zoomControl: true, attributionControl: true }).setView(SEOUL, 11);

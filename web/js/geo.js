@@ -2,6 +2,7 @@
 // GPS는 휴대폰이 위성 신호로 직접 계산하므로 인터넷이 없어도 동작한다.
 // 다만 인터넷이 없으면 위치 보조(A-GPS)를 못 받아 첫 위치를 잡는 데 1분 가까이 걸릴 수 있어, 오프라인에서는 더 오래 기다린다.
 // 웹사이트는 화면이 열려 있을 때만 위치를 읽을 수 있다.
+import { t } from './i18n.js';
 
 const GEO_ERRORS = {
   1: '위치 권한이 꺼져 있습니다. 휴대폰 설정에서 이 사이트(또는 브라우저)의 위치 권한을 허용하세요.',
@@ -41,12 +42,12 @@ function toPos(p) {
 export function getPosition({ timeout = 15000, highAccuracy = true, maximumAge = 30_000 } = {}) {
   return new Promise((resolve, reject) => {
     if (!('geolocation' in navigator)) {
-      reject(new Error('이 기기는 위치 기능을 지원하지 않습니다.'));
+      reject(new Error(t('이 기기는 위치 기능을 지원하지 않습니다.')));
       return;
     }
     navigator.geolocation.getCurrentPosition(
       (p) => resolve(toPos(p)),
-      (e) => reject(new Error(GEO_ERRORS[e.code] || e.message)),
+      (e) => reject(new Error(GEO_ERRORS[e.code] ? t(GEO_ERRORS[e.code]) : e.message)),
       { enableHighAccuracy: highAccuracy, timeout, maximumAge },
     );
   });
@@ -76,12 +77,12 @@ export async function getBestPosition() {
  */
 export function watchPosition(onPos, onError) {
   if (!('geolocation' in navigator)) {
-    onError?.(new Error('이 기기는 위치 기능을 지원하지 않습니다.'));
+    onError?.(new Error(t('이 기기는 위치 기능을 지원하지 않습니다.')));
     return () => {};
   }
   const id = navigator.geolocation.watchPosition(
     (p) => onPos(toPos(p)),
-    (e) => onError?.(new Error(GEO_ERRORS[e.code] || e.message)),
+    (e) => onError?.(new Error(GEO_ERRORS[e.code] ? t(GEO_ERRORS[e.code]) : e.message)),
     { enableHighAccuracy: true, timeout: navigator.onLine ? 20_000 : 60_000, maximumAge: 5_000 },
   );
   return () => navigator.geolocation.clearWatch(id);

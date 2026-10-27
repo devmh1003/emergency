@@ -1,16 +1,21 @@
 // 앱 시작점: 로그인 상태 확인, 실시간 데이터 구독, 화면 전환, 머리말·메뉴·바닥글.
 import { isConfigured, watchAuth, config } from './firebase.js';
-import { h, mount, toast } from './dom.js';
+import { h, mount, toast, savedFontScale } from './dom.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
-import { formatRemaining, meetingSchedule, emergencyLabel } from './logic.js';
+import { DEFAULT_PROTOCOLS_EN } from './data/protocols.en.js';
+import { t, lang } from './i18n.js';
+import { maybeAutoPrepare, prepareOffline } from './offline.js';
+import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel } from './logic.js';
 import * as store from './store.js';
 import { refreshPushToken } from './push.js';
-import { configNeededView, loginView, setupView, notRegisteredView, loadingView } from './views/auth.js';
+import {
+  configNeededView, loginView, setupView, notRegisteredView, loadingView, pickerView, backupView, langToggle,
+} from './views/auth.js';
 import { homeView } from './views/home.js';
 import { meetView } from './views/meet.js';
 import { protocolsView, protocolDetailView } from './views/protocols.js';
 import { familyView, memberDetailView } from './views/family.js';
-import { emergencyView, maybeAlarm } from './views/emergency.js';
+import { emergencyView, maybeAlarm, maybeTestAlarm } from './views/emergency.js';
 import { memberEditView, meetEditListView, meetEditView, protocolAdminView, protocolEditView } from './views/admin.js';
 import { recordsAdminView, directoryView } from './views/records.js';
 import { contactsView } from './views/contacts.js';
@@ -28,6 +33,10 @@ const footerEl = document.getElementById('footer');
 export const state = {
   user: null,
   me: null,
+  // public/gates: 접속 코드(관문 계정)와 세대. 세대가 다른 가족 문서는 예전 방식 계정이다.
+  gates: null,
+  // 관리자 화면용: 예전 방식으로 남아 있는 가족 문서 (정리 대상)
+  legacyMembers: [],
   // 관리자: 가족 전체. 일반 가족: 본인 + 관리자가 지정한 최대 3명.
   members: [],
   emergency: null,
@@ -37,7 +46,14 @@ export const state = {
   checklist: {},
   online: navigator.onLine,
   get protocols() {
-    const list = this.serverProtocols.length ? this.serverProtocols : DEFAULT_PROTOCOLS;
+    // 영어 화면: 기본 대처법은 영어판을 쓰고, 관리자가 따로 추가한 대처법만 서버 것을 붙인다.
+    let list;
+    if (lang === 'en') {
+      const builtIn = new Set(DEFAULT_PROTOCOLS_EN.map((p) => p.id));
+      list = [...DEFAULT_PROTOCOLS_EN, ...this.serverProtocols.filter((p) => !builtIn.has(p.id))];
+    } else {
+      list = this.serverProtocols.length ? this.serverProtocols : DEFAULT_PROTOCOLS;
+    }
     return [...list].sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
   },
   get isAdmin() {
@@ -134,7 +150,7 @@ function route() {
     mount(viewEl, m.view(ctx));
   } catch (err) {
     console.error(err);
-    mount(viewEl, h('p', { class: 'empty' }, `화면을 그리지 못했습니다: ${err.message}`));
+    mount(viewEl, h('p', { class: 'empty' }, t('화면을 그리지 못했습니다: {error}', { error: err.message })));
   }
   window.scrollTo(0, 0);
   renderChrome();
@@ -143,12 +159,12 @@ function route() {
 // ---------- 머리말·메뉴·바닥글 ----------
 
 const NAV = [
-  ['/', '🏠', '홈'],
-  ['/meet', '📍', '집합장소'],
-  ['/protocols', '📘', '대처법'],
-  ['/family', '👪', '가족'],
-  ['/contacts', '☎️', '연락처'],
-  ['/settings', '⚙️', '설정'],
+  ['/', '🏠', t('홈')],
+  ['/meet', '📍', t('집합장소')],
+  ['/protocols', '📘', t('대처법')],
+  ['/family', '👪', t('가족')],
+  ['/contacts', '☎️', t('연락처')],
+  ['/settings', '⚙️', t('설정')],
 ];
 
 // 휴대폰 하단 메뉴는 5칸만
@@ -175,15 +191,18 @@ function renderHeader() {
     h('a', { class: 'brand-link', href: '#/' },
       h('img', { class: 'brand-mark', src: 'icons/icon.svg', alt: '' }),
       h('span', { class: 'brand-title' },
-        h('strong', null, config.appName || '우리 가족 비상연락'),
+        h('strong', null, t(config.appName || '우리 가족 비상연락')),
         h('span', null, 'Family Emergency Response'))),
     h('div', { class: 'header-meta' },
-      state.me ? h('span', { class: 'header-user' }, `${state.me.name}${state.isAdmin ? ' · 관리자' : ''}`) : null,
-      state.me
-        ? (e?.active
-          ? h('a', { class: 'pill pill-emergency', href: '#/meet' }, '● 비상')
-          : h('span', { class: 'pill pill-normal' }, '● 평상시'))
-        : null)));
+      state.me ? h('span', { class: 'header-user' }, `${state.me.name}${state.isAdmin ? ` · ${t('관리자')}` : ''}`) : null,
+      langToggle('btn btn-outline btn-sm header-lang'),
+      state.me ? statusPill(emergencyLevel(e)) : null)));
+}
+
+function statusPill(level) {
+  if (level === 'real') return h('a', { class: 'pill pill-emergency', href: '#/meet' }, t('● 실제 상황'));
+  if (level === 'alert') return h('a', { class: 'pill pill-alert', href: '#/emergency' }, t('● 경계'));
+  return h('span', { class: 'pill pill-normal' }, t('● 평상시'));
 }
 
 function renderChrome() {
@@ -198,7 +217,7 @@ function renderChrome() {
   const path = currentPath();
   mount(topNavEl, h('div', { class: 'top-nav-inner' },
     NAV.map(([to, , label]) => navLink(to, null, label, path)),
-    state.isAdmin ? navLink('/admin/logs', null, '관리자 기록', path, 'nav-admin') : null));
+    state.isAdmin ? navLink('/admin/logs', null, t('관리자 기록'), path, 'nav-admin') : null));
   mount(navEl, NAV.filter(([to]) => BOTTOM_NAV.includes(to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
   mount(bannerEl, state.online ? null : offlineBanner(), emergencyBanner());
   renderFooter();
@@ -206,62 +225,52 @@ function renderChrome() {
 
 function offlineBanner() {
   return h('div', { class: 'offline-banner', role: 'status' },
-    h('div', null, '오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.'));
+    h('div', null, t('오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.')));
 }
 
 function emergencyBanner() {
   const e = state.emergency;
-  if (!e?.active) return null;
+  const level = emergencyLevel(e);
+  if (!level) return null;
+  if (level === 'alert') {
+    return h('a', { class: 'emergency-banner banner-alert', href: '#/emergency', role: 'alert' },
+      h('div', { class: 'emergency-banner-inner' },
+        h('span', { class: 'pulse-dot', 'aria-hidden': 'true' }),
+        h('strong', null, t('경계 발령 — {type}', { type: emergencyLabel(e.type) })),
+        h('span', { class: 'banner-target' }, t('생존신고를 하고 대비하세요'))));
+  }
   const { currentRank, points } = meetingSchedule(state.meetingPoints, e);
   const target = points.find((p) => p.rank === currentRank);
   return h('a', { class: 'emergency-banner', href: '#/meet', role: 'alert' },
     h('div', { class: 'emergency-banner-inner' },
       h('span', { class: 'pulse-dot', 'aria-hidden': 'true' }),
-      h('strong', null, `비상 선언 — ${emergencyLabel(e.type)}`),
-      target ? h('span', { class: 'banner-target' }, `지금 갈 곳: ${target.rank}순위 ${target.name}`) : h('span', null, '집합장소 확인')));
+      h('strong', null, t('실제 상황 — {type}', { type: emergencyLabel(e.type) })),
+      target ? h('span', { class: 'banner-target' }, t('지금 갈 곳: {rank}순위 {name}', { rank: target.rank, name: target.name })) : h('span', null, t('집합장소 확인'))));
 }
 
 function renderFooter() {
   mount(footerEl,
     h('div', { class: 'site-footer-inner' },
       h('div', null,
-        h('h2', null, config.appName || '우리 가족 비상연락'),
-        h('p', null, '비상 상황에서 가족의 안전을 확인하고 다시 모이기 위한 가족 전용 서비스입니다.'),
-        h('p', null, '이 사이트는 개인이 운영하는 서비스이며, 어떤 정부기관과도 관련이 없습니다. 실제 재난 시에는 재난문자와 공공기관의 안내를 우선 따르세요.')),
+        h('h2', null, t(config.appName || '우리 가족 비상연락')),
+        h('p', null, t('비상 상황에서 가족의 안전을 확인하고 다시 모이기 위한 가족 전용 서비스입니다.')),
+        h('p', null, t('실제 재난 시에는 재난문자와 공공기관의 안내를 함께 확인하세요.'))),
       h('div', null,
-        h('h2', null, '바로가기'),
+        h('h2', null, t('바로가기')),
         h('ul', null,
-          h('li', null, h('a', { href: '#/guide' }, '사용 안내')),
-          h('li', null, h('a', { href: '#/contacts' }, '비상 연락처')),
-          h('li', null, h('a', { href: '#/protocols' }, '상황별 대처법')),
-          h('li', null, h('a', { href: '#/print' }, '인쇄용 비상카드')))),
+          h('li', null, h('a', { href: '#/guide' }, t('사용 안내'))),
+          h('li', null, h('a', { href: '#/contacts' }, t('비상 연락처'))),
+          h('li', null, h('a', { href: '#/protocols' }, t('상황별 대처법'))),
+          h('li', null, h('a', { href: '#/print' }, t('인쇄용 비상카드'))))),
       h('div', null,
-        h('h2', null, '긴급 신고'),
+        h('h2', null, t('긴급 신고')),
         h('ul', null,
-          h('li', null, h('a', { href: 'tel:119' }, '119 화재·구조·구급')),
-          h('li', null, h('a', { href: 'tel:112' }, '112 경찰')),
-          h('li', null, h('a', { href: 'tel:1339' }, '1339 질병관리청'))))),
+          h('li', null, h('a', { href: 'tel:119' }, t('119 화재·구조·구급'))),
+          h('li', null, h('a', { href: 'tel:112' }, t('112 경찰'))),
+          h('li', null, h('a', { href: 'tel:1339' }, t('1339 질병관리청')))))),
     h('div', { class: 'site-footer-bottom' },
       h('div', null,
-        h('span', null, `버전 ${document.documentElement.dataset.build || 'dev'}`),
-        h('span', null, '디자인: U.S. Web Design System 원칙 참고'))));
-}
-
-// ---------- 글자 크기 ----------
-
-const FONT_KEY = 'family.fontScale';
-
-function applyFontScale(scale) {
-  document.documentElement.dataset.fontScale = scale;
-  for (const b of document.querySelectorAll('[data-font]')) b.setAttribute('aria-pressed', String(b.dataset.font === scale));
-  try { localStorage.setItem(FONT_KEY, scale); } catch { /* 무시 */ }
-}
-
-function setupFontControls() {
-  let saved = 'md';
-  try { saved = localStorage.getItem(FONT_KEY) || 'md'; } catch { /* 무시 */ }
-  for (const b of document.querySelectorAll('[data-font]')) b.addEventListener('click', () => applyFontScale(b.dataset.font));
-  applyFontScale(saved);
+        h('span', null, t('버전 {build}', { build: document.documentElement.dataset.build || 'dev' })))));
 }
 
 // 남은 시간 표시(data-until)는 30초마다 갱신
@@ -352,7 +361,7 @@ function startSubscriptions(uid) {
   meUnsub = store.watchDoc(['members', uid], (me, snap) => {
     // 방금 등록한 문서가 아직 서버에 저장되기 전이면 기다린다. 서버가 모르는 상태로 구독하면 거부된다.
     if (!active && snap.metadata.hasPendingWrites) return;
-    state.me = me && me.active ? me : null;
+    state.me = me && me.active && me.gen === state.gates?.gen ? me : null;
     store.setActor(state.me);
     if (!state.me) {
       active = false;
@@ -390,7 +399,8 @@ function startDataSubscriptions() {
   subsKey = state.me.role;
   if (state.isAdmin) {
     unsubs.push(store.watchMembers((list) => {
-      state.members = sortMembers(list);
+      state.members = sortMembers(list.filter((m) => m.gen === state.gates?.gen));
+      state.legacyMembers = list.filter((m) => m.gen !== state.gates?.gen);
       notify();
     }, onSubError));
   } else {
@@ -401,9 +411,14 @@ function startDataSubscriptions() {
     notify();
     maybeAlarm(state);
   }, onSubError));
+  unsubs.push(store.watchLatestAlarmTest((test) => {
+    maybeTestAlarm(state, test);
+  }, onSubError));
   unsubs.push(store.watchMeetingPoints((list) => {
     state.meetingPoints = list.sort((a, b) => a.rank - b.rank);
     notify();
+    // 집합장소 주변 지도를 미리 받아 둔다 (하루 한 번, 또는 집합장소가 바뀌었을 때).
+    maybeAutoPrepare(state);
   }, onSubError));
   unsubs.push(store.watchProtocols((list) => {
     state.serverProtocols = list;
@@ -421,13 +436,54 @@ function startDataSubscriptions() {
 
 // ---------- 시작 ----------
 
-function showSignedOut() {
-  mount(viewEl, currentPath() === '/setup' ? setupView({ navigate }) : loginView({ navigate }));
+// 로그인 전: 처음 설정이 안 됐으면 설정 화면, 됐으면 접속 코드 화면
+async function showSignedOut() {
+  mount(viewEl, loadingView());
+  try {
+    state.gates = await store.getGates();
+  } catch (err) {
+    console.warn('접속 정보를 불러오지 못했습니다', err);
+  }
+  if (state.user) return; // 그 사이에 로그인됨
+  mount(viewEl, state.gates ? loginView() : (state.online ? setupView() : offlineFirstView()));
+}
+
+function offlineFirstView() {
+  return h('div', { class: 'auth-wrap' }, h('div', { class: 'auth-card' },
+    h('h1', null, t('인터넷 연결이 필요합니다')),
+    h('p', null, t('처음 들어올 때는 인터넷이 필요합니다. 한 번 들어온 뒤에는 인터넷 없이도 열립니다.'))));
+}
+
+/** 관문 계정(접속 코드)으로 로그인한 상태면 어느 코드인지 */
+function gateKind(user) {
+  const g = state.gates;
+  if (!g || !user) return null;
+  return ['family', 'admin', 'backup'].find((k) => g[`${k}Uid`] === user.uid) || null;
 }
 
 function start() {
-  setupFontControls();
+  document.documentElement.dataset.fontScale = savedFontScale();
+  document.documentElement.lang = lang;
+  document.title = t(config.appName || '우리 가족 비상연락');
+  // index.html 에 직접 적힌 문구도 언어에 맞춘다.
+  const skip = document.querySelector('.skip-link');
+  if (skip) skip.textContent = t('본문 바로가기');
+  topNavEl.setAttribute('aria-label', t('주 메뉴'));
+  navEl.setAttribute('aria-label', t('하단 메뉴'));
+  // 홈 화면에 앱을 설치하는 순간 오프라인 준비를 한다 (지도 미리 받기, 저장 공간 고정).
+  window.addEventListener('appinstalled', () => {
+    if (state.me) prepareOffline(state).catch(() => {});
+  });
   if ('serviceWorker' in navigator) {
+    // 새 버전이 설치되면 한 번 새로고침해서 화면·CSS·JS를 모두 같은 버전으로 맞춘다.
+    // (처음 설치할 때는 기존 서비스 워커가 없으므로 새로고침하지 않는다.)
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded || document.getElementById('alarm')) return;
+      reloaded = true;
+      location.reload();
+    });
     navigator.serviceWorker.register('./sw.js').catch((err) => console.warn('서비스 워커 등록 실패', err));
   }
   window.addEventListener('online', () => { state.online = true; renderChrome(); });
@@ -442,10 +498,9 @@ function start() {
   mount(viewEl, loadingView());
   window.addEventListener('hashchange', () => {
     if (state.me) route();
-    else if (!state.user) showSignedOut();
   });
 
-  watchAuth((user) => {
+  watchAuth(async (user) => {
     state.user = user;
     state.me = null;
     store.setActor(null);
@@ -456,7 +511,17 @@ function start() {
       showSignedOut();
       return;
     }
-    startSubscriptions(user.uid);
+    // 세대(gen)를 알아야 내 계정이 지금 유효한지 판단한다. 오프라인이면 휴대폰에 저장된 값을 쓴다.
+    try {
+      state.gates = await store.getGates() || state.gates;
+    } catch (err) {
+      console.warn('접속 정보를 불러오지 못했습니다', err);
+    }
+    if (state.user !== user) return;
+    const kind = gateKind(user);
+    if (kind === 'backup') mount(viewEl, backupView());
+    else if (kind) mount(viewEl, pickerView({ kind }));
+    else startSubscriptions(user.uid);
   });
 }
 
@@ -467,7 +532,7 @@ document.addEventListener('visibilitychange', () => {
 
 window.addEventListener('error', (e) => {
   if (String(e.message).includes('ResizeObserver')) return;
-  toast('문제가 생겼습니다. 화면을 새로고침해 주세요.', 'error');
+  toast(t('문제가 생겼습니다. 화면을 새로고침해 주세요.'), 'error');
 });
 
 start();
