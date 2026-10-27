@@ -131,7 +131,7 @@ export function memberEditView({ state, params, navigate }) {
 export function meetEditListView({ state, live }) {
   return h('div', { class: 'page' },
     pageHeader(t('집합장소 설정'), { crumbs: [{ label: t('집합장소'), href: '#/meet' }] }),
-    card(h('p', null, t('1순위부터 차례로 정하세요. 시간은 "실제 상황 발생 후 몇 시간"으로 정하고, 실제 상황이 선언되면 실제 시각으로 계산됩니다 (경계 단계에서는 시작하지 않음).')),
+    card(h('p', null, t('1순위부터 차례로 정하세요. 시간은 "1급 비상 발생 후 몇 시간"으로 정하고, 1급 비상이 선언되면 실제 시각으로 계산됩니다 (2급 단계에서는 시작하지 않음).')),
       h('p', { class: 'muted small' }, t('각 장소에서 "대기 시간"이 지나도 모두 모이지 못하면 다음 순위로 이동합니다.'))),
     live(() => {
       const warnings = scheduleWarnings(state.meetingPoints);
@@ -185,10 +185,10 @@ export function meetEditView({ state, params, navigate }) {
         }, t('📍 현재 위치로')),
         h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onClick: () => { picked = null; map.setPicked(null); showCoords(); } }, t('위치 지우기')))),
     h('div', { class: 'row' },
-      field(t('실제 상황 발생 후 (시간)'), h('input', { name: 'offsetHours', type: 'number', min: 0, max: 1440, step: 0.5, required: true, value: String(p.offsetHours ?? (rank - 1) * 6) })),
+      field(t('1급 비상 발생 후 (시간)'), h('input', { name: 'offsetHours', type: 'number', min: 0, max: 1440, step: 0.5, required: true, value: String(p.offsetHours ?? (rank - 1) * 6) })),
       field(t('대기 시간 (분)'), h('input', { name: 'waitMinutes', type: 'number', min: 0, max: 1440, step: 10, required: true, value: String(p.waitMinutes ?? 60) }))),
     field(t('도착 시각 직접 지정 (선택)'), h('input', { name: 'overrideAt', type: 'datetime-local', value: toLocalInput(p.overrideAt) }),
-      t('실제 상황 중에 시간을 바꿔야 할 때 씁니다. 비워 두면 "실제 상황 발생 후 시간"으로 계산합니다.')),
+      t('1급 비상 중에 시간을 바꿔야 할 때 씁니다. 비워 두면 "1급 비상 발생 후 시간"으로 계산합니다.')),
     field(t('안내 메모'), h('textarea', { name: 'note', rows: 3, maxlength: 500, value: p.note || '', placeholder: t('예: 정문 앞 시계탑 아래. 못 들어가면 길 건너 편의점.') })),
     h('div', { class: 'row' },
       p.name ? h('button', {

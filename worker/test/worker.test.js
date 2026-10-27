@@ -82,13 +82,16 @@ test('알림은 비상 상태마다 다른 키를 가진다', () => {
   assert.match(notificationContent({ active: false, endedByName: '엄마' }).body, /엄마/);
 });
 
-test('경계 → 실제로 바뀌면 알림 키와 내용이 달라진다', () => {
+test('2급 → 1급으로 바뀌면 알림 키와 내용이 달라지고, 1급만 긴급 알림이다', () => {
   const alert = { active: true, level: 'alert', type: 'war', declaredAt: 'T1', declaredByName: '아빠' };
   const real = { ...alert, level: 'real', realAt: 'T3', escalatedByName: '엄마' };
   assert.equal(notificationKey(alert), 'alert:T1');
   assert.equal(notificationKey(real), 'real:T3');
-  assert.match(notificationContent(alert).title, /경계/);
-  assert.match(notificationContent(real).title, /실제/);
+  assert.match(notificationContent(alert).title, /2급/);
+  assert.match(notificationContent(real).title, /1급/);
+  assert.equal(notificationContent(alert).urgent, false);
+  assert.equal(notificationContent(real).urgent, true);
+  assert.match(notificationContent({ active: true, type: 'disaster' }).title, /대형재난/);
   assert.match(notificationContent(real).body, /^엄마:/);
   assert.match(notificationContent({ active: true, type: 'tsunami' }).title, /지진해일/);
 });
@@ -213,6 +216,8 @@ test('테스트 알람은 관리자만, 테스트마다 한 번만 보낸다', a
   const msg = JSON.parse(fcm[0].body).message;
   assert.match(msg.notification.title, /테스트/);
   assert.equal(msg.data.kind, 'test');
+  // 소리 지정이 없으면 1급 테스트: 닫을 때까지 화면에 남는다
+  assert.equal(msg.webpush.notification.requireInteraction, true);
   const log = calls.find((c) => c.method === 'POST' && c.url.endsWith('/documents/auditLog'));
   assert.equal(JSON.parse(log.body).fields.action.stringValue, 'notify.drill');
 

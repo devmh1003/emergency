@@ -40,18 +40,18 @@ function stepIndicator(state) {
 function stepIdleText(state, points) {
   const level = emergencyLevel(state.emergency);
   if (level === 'real') return t('모든 단계가 지났습니다.');
-  if (level === 'alert') return t('경계 중 · 실제 상황이 되면 시간이 시작됩니다 · 집합장소 {n}곳', { n: points.length });
+  if (level === 'alert') return t('2급 비상 중 · 1급 비상이 되면 시간이 시작됩니다 · 집합장소 {n}곳', { n: points.length });
   return t('평상시 · 집합장소 {n}곳 준비됨', { n: points.length });
 }
 
 function targetCard(state) {
   if (emergencyLevel(state.emergency) === 'alert') {
-    return alertBox('warning', t('경계 발령 중입니다'),
-      h('p', null, t('집합 시간은 아직 시작하지 않았습니다. 실제 상황이 선언되면 그때부터 아래 시간이 실제 날짜와 시간으로 바뀝니다. 지금은 각 장소와 가는 길을 미리 확인하세요.')));
+    return alertBox('warning', t('2급 비상 발령 중입니다'),
+      h('p', null, t('집합 시간은 아직 시작하지 않았습니다. 1급 비상이 선언되면 그때부터 아래 시간이 실제 날짜와 시간으로 바뀝니다. 지금은 각 장소와 가는 길을 미리 확인하세요.')));
   }
   if (!state.emergency?.active) {
     return alertBox('info', t('평상시입니다'),
-      h('p', null, t('아래 시간은 "실제 상황 발생 후 몇 시간"으로 표시됩니다. 실제 상황이 선언되면 실제 날짜와 시간으로 바뀌고, 지금 갈 곳이 여기에 나타납니다. (경계 단계에서는 시간이 시작되지 않습니다.)')));
+      h('p', null, t('아래 시간은 "1급 비상 발생 후 몇 시간"으로 표시됩니다. 1급 비상이 선언되면 실제 날짜와 시간으로 바뀌고, 지금 갈 곳이 여기에 나타납니다. (2급 단계에서는 시간이 시작되지 않습니다.)')));
   }
   const { currentRank, points } = meetingSchedule(state.meetingPoints, state.emergency);
   const p = points.find((x) => x.rank === currentRank);

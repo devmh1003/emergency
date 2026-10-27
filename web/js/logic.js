@@ -14,13 +14,13 @@ export function toDate(v) {
 }
 
 // ---------- 경보 단계 ----------
-// 경계: 위험이 다가옴. 대비하고 생존신고. 집합 시간은 아직 시작하지 않는다.
-// 실제: 지금 비상. 이때부터 집합장소 시간이 계산된다.
-// level 이 없는 예전 문서는 실제로 본다.
+// 2급(alert): 준위험 상황. 알림만 가고 경보음은 없다. 집합 시간은 아직 시작하지 않는다.
+// 1급(real): 지진·전쟁·대형재난. 경보음 + 알림. 이때부터 집합장소 시간이 계산된다.
+// level 이 없는 예전 문서는 1급으로 본다.
 
 export const EMERGENCY_LEVELS = {
-  alert: { label: '경계', title: '경계 발령' },
-  real: { label: '실제', title: '실제 상황' },
+  alert: { label: '2급', title: '2급 비상 발령' },
+  real: { label: '1급', title: '1급 비상' },
 };
 
 /** 지금 경보 단계: 'alert' | 'real' | null(평상시) */
@@ -33,25 +33,25 @@ export function levelTitle(level) {
   return t(EMERGENCY_LEVELS[level]?.title || '비상');
 }
 
-/** 경보 단계 짧은 이름 ('경계' / '실제'), 지금 언어로 */
+/** 경보 단계 짧은 이름 ('2급' / '1급'), 지금 언어로 */
 export function levelLabel(level) {
   return t(EMERGENCY_LEVELS[level]?.label || '비상');
 }
 
-/** 실제 상황이 시작된 시각 (집합 시간의 기준). 경계 중이거나 평상시면 null. */
+/** 1급 비상이 시작된 시각 (집합 시간의 기준). 2급 비상 중이거나 평상시면 null. */
 export function realStartedAt(emergency) {
   if (emergencyLevel(emergency) !== 'real') return null;
   return toDate(emergency.realAt) || toDate(emergency.declaredAt);
 }
 
-/** 경보를 한 번만 울리기 위한 키. 경계 → 실제로 바뀌면 키가 달라져 다시 울린다. */
+/** 경보를 한 번만 띄우기 위한 키. 2급 → 1급으로 바뀌면 키가 달라져 다시 울린다. */
 export function alarmKey(emergency) {
   const level = emergencyLevel(emergency);
   const at = level === 'real' ? realStartedAt(emergency) : toDate(emergency?.declaredAt);
   return level && at ? `${level}:${at.getTime()}` : null;
 }
 
-/** 이 단계를 연 사람 (경계에서 실제로 바꾼 사람이 있으면 그 사람) */
+/** 이 단계를 연 사람 (2급에서 1급으로 올린 사람이 있으면 그 사람) */
 export function levelActor(emergency) {
   if (emergencyLevel(emergency) === 'real' && emergency.escalatedBy) {
     return { id: emergency.escalatedBy, name: emergency.escalatedByName };
@@ -61,7 +61,7 @@ export function levelActor(emergency) {
 
 /**
  * 집합장소 일정 계산.
- * 각 순위는 "실제 상황 발생 후 offsetHours 시간"에 도착하고 waitMinutes 동안 기다린다.
+ * 각 순위는 "1급 비상 발생 후 offsetHours 시간"에 도착하고 waitMinutes 동안 기다린다.
  * 관리자가 overrideAt을 넣으면 그 시각이 우선한다.
  * 지금 가야 할 곳은 "도착 시각 + 대기 시간"이 아직 지나지 않은 가장 높은 순위다.
  *
@@ -460,8 +460,8 @@ const AUDIT_LABELS = {
 export function emergencyLogTitle(e) {
   if (e.action === 'end') return t('비상 해제');
   const type = emergencyLabel(e.type);
-  if (e.action === 'escalate') return t('실제 상황 전환: {type}', { type });
-  return e.level === 'alert' ? t('경계 발령: {type}', { type }) : t('실제 상황 선언: {type}', { type });
+  if (e.action === 'escalate') return t('1급 격상: {type}', { type });
+  return e.level === 'alert' ? t('2급 비상 발령: {type}', { type }) : t('1급 비상 선언: {type}', { type });
 }
 
 export function auditLabel(action) {
@@ -494,7 +494,7 @@ export function buildTimeline({ emergencyLog = [], checkins = [], meetingLogs = 
   for (const a of alarmTests) {
     out.push({
       id: `t-${a.id}`, kind: 'test', at: toDate(a.at), who: a.byName, whoId: a.by,
-      title: t('가족 전체 테스트 알람 ({sound})', { sound: t(a.sound === 'alert' ? '경계음' : '실제음') }), detail: a.message || '',
+      title: t('가족 전체 테스트 알람 ({sound})', { sound: t(a.sound === 'alert' ? '2급' : '1급') }), detail: a.message || '',
     });
   }
   for (const c of checkins) {
@@ -591,6 +591,7 @@ export const EMERGENCY_TYPES = [
   { id: 'earthquake', label: '지진' },
   { id: 'flood', label: '태풍·홍수' },
   { id: 'tsunami', label: '지진해일' },
+  { id: 'disaster', label: '대형재난' },
   { id: 'landslide', label: '산사태' },
   { id: 'fire', label: '화재·산불' },
   { id: 'heat', label: '폭염' },

@@ -221,13 +221,13 @@ test('경계 → 실제로 바뀌면 경보 키가 달라져 다시 울린다', 
 });
 
 test('비상 기록 제목', () => {
-  assert.match(emergencyLogTitle({ action: 'declare', level: 'alert', type: 'war' }), /^경계 발령: 전쟁/);
-  assert.match(emergencyLogTitle({ action: 'declare', type: 'war' }), /^실제 상황 선언/);
-  assert.match(emergencyLogTitle({ action: 'escalate', type: 'earthquake' }), /^실제 상황 전환: 지진/);
+  assert.match(emergencyLogTitle({ action: 'declare', level: 'alert', type: 'war' }), /^2급 비상 발령: 전쟁/);
+  assert.match(emergencyLogTitle({ action: 'declare', type: 'war' }), /^1급 비상 선언/);
+  assert.match(emergencyLogTitle({ action: 'escalate', type: 'earthquake' }), /^1급 격상: 지진/);
   assert.equal(emergencyLogTitle({ action: 'end' }), '비상 해제');
   const tl = buildTimeline({ alarmTests: [{ id: 't', at: T0, byName: '아빠', sound: 'alert', message: '훈련' }] });
   assert.equal(tl[0].kind, 'test');
-  assert.match(tl[0].title, /경계음/);
+  assert.match(tl[0].title, /2급/);
 });
 
 test('테스트 알람은 보낸 뒤 30분 안에만 울린다', () => {

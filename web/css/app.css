@@ -853,6 +853,21 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
 .code-row form { margin: 0.5rem 0 0.75rem; }
 .panel-subhead:first-child { margin-top: 0; }
 
+/* 빠른 비상 선언 (관리자) */
+.quick-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+@media (min-width: 40em) { .quick-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.quick-btn {
+  display: flex; align-items: center; gap: 0.5rem; min-height: 3.25rem; padding: 0.5rem 0.75rem;
+  border: 2px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink);
+  font: inherit; font-weight: 700; text-align: left; cursor: pointer;
+}
+.quick-btn:hover, .quick-btn:focus-visible { box-shadow: var(--shadow-2); }
+.quick-icon { font-size: 1.375rem; line-height: 1; }
+.quick-real { border-color: var(--secondary); background: var(--secondary-lighter); }
+.quick-alert { border-color: var(--warning); background: var(--warning-lighter); }
+.quick-head-real { color: var(--secondary); }
+.quick-head-alert { color: var(--warning-dark); }
+
 @keyframes shake { 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
 
 /* ---------- 알림 메시지(토스트) ---------- */

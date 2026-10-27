@@ -1,6 +1,6 @@
 // 가족 비상연락 Cloudflare Worker
 // 비밀 키(서비스 계정)가 필요한 일만 한다:
-//   POST /notify       비상 상태(경계·실제·해제)가 바뀌었으면 가족 모두에게 알림 (상태마다 한 번만)
+//   POST /notify       비상 상태(2급·1급·해제)가 바뀌었으면 가족 모두에게 알림 (상태마다 한 번만)
 //   POST /test-push    내 기기로 테스트 알림
 //   POST /drill        관리자: 가족 전체 테스트 알람 (테스트마다 한 번만)
 //   POST /admin/user   관리자: 가족 로그인 계정 삭제 · 비밀번호 초기화
@@ -19,6 +19,7 @@ const EMERGENCY_LABELS = {
   earthquake: '지진',
   flood: '태풍·홍수',
   tsunami: '지진해일',
+  disaster: '대형재난',
   landslide: '산사태',
   fire: '화재·산불',
   heat: '폭염',
@@ -69,12 +70,12 @@ function json(data, status, origin) {
 
 // ---------- 알림 ----------
 
-/** 경보 단계. level이 없는 예전 문서는 실제로 본다. */
+/** 경보 단계: 'alert'(2급, 알림만) | 'real'(1급, 경보음 + 알림). level이 없는 예전 문서는 1급으로 본다. */
 export function emergencyLevel(emergency) {
   return emergency?.level === 'alert' ? 'alert' : 'real';
 }
 
-/** 비상 상태마다 고유한 키. 같은 키로는 한 번만 보낸다. 경계 → 실제로 바뀌면 키가 달라져 다시 보낸다. */
+/** 비상 상태마다 고유한 키. 같은 키로는 한 번만 보낸다. 2급 → 1급으로 바뀌면 키가 달라져 다시 보낸다. */
 export function notificationKey(emergency) {
   if (!emergency) return null;
   if (emergency.active) {
@@ -92,24 +93,28 @@ export function notificationContent(emergency) {
     if (emergencyLevel(emergency) === 'alert') {
       const who = emergency.declaredByName ? `${emergency.declaredByName}: ` : '';
       return {
-        title: `⚠️ 경계 발령: ${label}`,
-        body: `${who}${emergency.message || '위험이 다가오고 있습니다. 생존신고를 하고 비상 배낭과 집합장소를 확인하세요.'}`.slice(0, 300),
+        title: `⚠️ 2급 비상: ${label}`,
+        body: `${who}${emergency.message || '준위험 상황입니다. 생존신고를 하고 비상 배낭과 집합장소를 확인하세요.'}`.slice(0, 300),
+        urgent: false,
       };
     }
     const name = emergency.escalatedByName || emergency.declaredByName;
     const who = name ? `${name}: ` : '';
     return {
-      title: `🚨 실제 상황: ${label}`,
+      title: `🚨 1급 비상: ${label}`,
       body: `${who}${emergency.message || '지금 바로 생존신고를 하고 집합장소로 이동하세요.'}`.slice(0, 300),
+      urgent: true,
     };
   }
   return {
     title: '✅ 비상 해제',
     body: `${emergency.endedByName || '관리자'}님이 비상을 해제했습니다.`,
+    urgent: false,
   };
 }
 
-async function sendPush(env, accessToken, token, { title, body, kind = 'emergency' }) {
+// urgent(1급): 사용자가 닫을 때까지 화면에 남고 길게 진동한다. 그 밖(2급·해제·테스트 알림)은 보통 알림.
+async function sendPush(env, accessToken, token, { title, body, kind = 'emergency', urgent = false }) {
   const appUrl = env.APP_URL || '';
   const res = await fetch(`https://fcm.googleapis.com/v1/projects/${env.FIREBASE_PROJECT_ID}/messages:send`, {
     method: 'POST',
@@ -127,8 +132,8 @@ async function sendPush(env, accessToken, token, { title, body, kind = 'emergenc
             icon: appUrl ? `${appUrl}icons/icon-192.png` : undefined,
             tag: `family-${kind}`,
             renotify: true,
-            requireInteraction: true,
-            vibrate: [600, 300, 600, 300, 600],
+            requireInteraction: urgent,
+            vibrate: urgent ? [600, 300, 600, 300, 600] : [200, 100, 200],
           },
           fcm_options: appUrl.startsWith('https://') ? { link: appUrl } : undefined,
         },
@@ -239,7 +244,7 @@ async function handleNotify(env, fs, accessToken, caller) {
   const active = new Set((await fs.list('members')).filter((m) => m.active === true).map((m) => m.id));
   const tokens = (await fs.list('pushTokens')).filter((t) => active.has(t.uid));
   const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(emergency));
-  const what = emergency.active ? (emergencyLevel(emergency) === 'alert' ? '경계' : '실제') : '';
+  const what = emergency.active ? (emergencyLevel(emergency) === 'alert' ? '2급' : '1급') : '';
   await logNotify(fs, caller, emergency.active ? 'notify.emergency' : 'notify.end', result,
     `${what ? `${what} · ` : ''}기기 ${tokens.length}대 대상`);
   return result;
@@ -259,7 +264,8 @@ async function handleDrill(env, fs, accessToken, caller, body) {
   const tokens = (await fs.list('pushTokens')).filter((t) => active.has(t.uid) && t.uid !== caller.uid);
   const result = await sendToTokens(env, fs, accessToken, tokens, {
     kind: 'test',
-    title: '🔔 테스트 알람 (실제 상황 아님)',
+    urgent: test.sound !== 'alert',
+    title: `🔔 테스트 알람 · ${test.sound === 'alert' ? '2급' : '1급'} (실제 상황 아님)`,
     body: `${test.byName ? `${test.byName}: ` : ''}${test.message || '경보 훈련입니다. 앱을 열어 확인을 눌러 주세요.'}`.slice(0, 300),
   });
   await logNotify(fs, caller, 'notify.drill', result, `기기 ${tokens.length}대 대상`);

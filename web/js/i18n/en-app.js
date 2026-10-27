@@ -5,14 +5,14 @@ export const EN = {
   '연락처': 'Contacts',
   '가족': 'Family',
   '우리 가족 비상연락': 'Family Emergency Network',
-  '● 실제 상황': '● Emergency',
-  '● 경계': '● Alert',
+  '● 1급 비상': '● Level 1',
+  '● 2급 비상': '● Level 2',
   '● 평상시': '● Normal',
   '오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.':
     'You are offline. Saved information is shown, and check-ins are kept on this phone and sent automatically when you reconnect. GPS location still works.',
-  '경계 발령 — {type}': 'Alert issued — {type}',
+  '2급 비상 발령 — {type}': 'Level 2 emergency declared — {type}',
   '생존신고를 하고 대비하세요': 'Check in and get ready',
-  '실제 상황 — {type}': 'Real emergency — {type}',
+  '1급 비상 — {type}': 'Level 1 emergency — {type}',
   '지금 갈 곳: {rank}순위 {name}': 'Go now: Priority {rank} {name}',
   '비상 상황에서 가족의 안전을 확인하고 다시 모이기 위한 가족 전용 서비스입니다.':
     'A private service for confirming each other’s safety and reuniting as a family in an emergency.',
@@ -56,9 +56,9 @@ export const EN = {
     '{name} has been added. Share the {code} with them and they can pick their name from the list to sign in.',
   '저장하면 바로 로그인 목록에 이름이 올라갑니다. 따로 정할 아이디나 비밀번호는 없습니다.':
     'Once saved, the name appears in the sign-in list right away. There is no separate ID or password to set.',
-  '실제 상황 발생 후 (시간)': 'Hours after the emergency starts',
-  '실제 상황 중에 시간을 바꿔야 할 때 씁니다. 비워 두면 "실제 상황 발생 후 시간"으로 계산합니다.':
-    'Use this to change the time during a real emergency. Leave empty to use "hours after the emergency starts".',
+  '1급 비상 발생 후 (시간)': 'Hours after the emergency starts',
+  '1급 비상 중에 시간을 바꿔야 할 때 씁니다. 비워 두면 "1급 비상 발생 후 시간"으로 계산합니다.':
+    'Use this to change the time during a Level 1 emergency. Leave empty to use "hours after the emergency starts".',
 
   // ---------- 로그인 화면 (auth.js) ----------
   '불러오는 중': 'Loading',
@@ -118,7 +118,7 @@ export const EN = {
     'Sign out and sign in again with an access code. This screen updates automatically once you are registered.',
 
   // ---------- 관리자 기록 (records.js) ----------
-  '경계·실제 발령과 해제, 테스트 알람, 알림 발송 결과, 생존신고, 집합장소 기록, 관리 작업을 시간순으로 모아 봅니다.':
+  '1급·2급 발령과 해제, 테스트 알람, 알림 발송 결과, 생존신고, 집합장소 기록, 관리 작업을 시간순으로 모아 봅니다.':
     'Alerts and emergencies issued and ended, test alarms, notification results, check-ins, meeting-point notes, and admin actions, in time order.',
 
   // ---------- 설정: 오프라인 준비 (settings.js) ----------

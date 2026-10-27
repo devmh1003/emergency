@@ -99,7 +99,7 @@ export const EN = {
   '저장하면 로그인 계정이 바로 만들어집니다. 아이디와 첫 비밀코드를 본인에게 직접 알려 주세요.': 'Saving creates the login account immediately. Share the ID and initial secret code with the person directly.',
 
   // ---- 집합장소 (admin.js) ----
-  '1순위부터 차례로 정하세요. 시간은 "실제 상황 발생 후 몇 시간"으로 정하고, 실제 상황이 선언되면 실제 시각으로 계산됩니다 (경계 단계에서는 시작하지 않음).': 'Set meeting points in order, starting with Priority 1. Times are set as "hours after an Emergency begins" and are converted to actual times once an Emergency is declared (the clock does not start at the Alert level).',
+  '1순위부터 차례로 정하세요. 시간은 "1급 비상 발생 후 몇 시간"으로 정하고, 1급 비상이 선언되면 실제 시각으로 계산됩니다 (2급 단계에서는 시작하지 않음).': 'Set meeting points in order, starting with Priority 1. Times are set as "hours after a Level 1 emergency begins" and are converted to actual times once a Level 1 emergency is declared (the clock does not start at the Level 2 emergency level).',
   '각 장소에서 "대기 시간"이 지나도 모두 모이지 못하면 다음 순위로 이동합니다.': 'If not everyone has arrived when the "wait time" at a meeting point runs out, move on to the next priority.',
   '{rank}순위': 'Priority {rank}',
   '비어 있음': 'Not set',
@@ -173,7 +173,7 @@ export const EN = {
   '연락처 관리': 'Manage contacts',
   '가족 지정 연락처': 'Family contacts',
   '비상 경보': 'Emergency alert',
-  '경계·실제 발령, 해제, 테스트': 'Issue Alert or Emergency, end, test',
+  '1급·2급 발령, 해제, 테스트': 'Declare Level 1 or Level 2, end, test',
   '볼 수 없는 가족입니다.': 'You do not have access to this family member.',
   '대비 체크리스트': 'Preparedness checklist',
   '최근': 'Latest',

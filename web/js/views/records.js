@@ -97,7 +97,7 @@ export function recordsAdminView({ state }) {
   }, t('⬇ CSV 내려받기'));
 
   return h('div', { class: 'page' },
-    pageHeader(t('관리자 기록'), { lead: t('경계·실제 발령과 해제, 테스트 알람, 알림 발송 결과, 생존신고, 집합장소 기록, 관리 작업을 시간순으로 모아 봅니다.') }, exportBtn),
+    pageHeader(t('관리자 기록'), { lead: t('1급·2급 발령과 해제, 테스트 알람, 알림 발송 결과, 생존신고, 집합장소 기록, 관리 작업을 시간순으로 모아 봅니다.') }, exportBtn),
     errorBox,
     h('div', { class: 'card' },
       h('div', { class: 'filters' },

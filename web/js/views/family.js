@@ -110,7 +110,7 @@ export function familyView({ state, live, onChange, navigate }) {
           ['#/admin/meet', '📍', t('집합장소 설정'), t('1~10순위')],
           ['#/admin/protocols', '📘', t('대처법 관리'), t('내용·체크리스트 편집')],
           ['#/contacts', '☎️', t('연락처 관리'), t('가족 지정 연락처')],
-          ['#/emergency', '🚨', t('비상 경보'), t('경계·실제 발령, 해제, 테스트')]].map(([href, icon, title, desc]) => h('a', { class: 'tile tile-admin', href },
+          ['#/emergency', '🚨', t('비상 경보'), t('1급·2급 발령, 해제, 테스트')]].map(([href, icon, title, desc]) => h('a', { class: 'tile tile-admin', href },
           h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))))
       : null);
 }

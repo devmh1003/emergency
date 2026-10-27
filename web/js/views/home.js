@@ -10,6 +10,7 @@ import {
 import { t } from '../i18n.js';
 import { familyStatusList, statusSummary } from './family.js';
 import { locationPanel } from './location.js';
+import { quickDeclarePanel } from './emergency.js';
 
 /** 위치를 읽고 신고를 저장한다. 위치를 못 읽어도 신고는 저장한다. */
 async function report(state, type, note, knownPos) {
@@ -41,10 +42,10 @@ function situation(state) {
         h('a', { class: 'btn btn-sm btn-outline', href: '#/guide' }, t('사용 안내'))));
   }
   if (emergencyLevel(e) === 'alert') {
-    return alertBox('warning', t('경계 발령: {type}', { type: emergencyLabel(e.type) }),
+    return alertBox('warning', t('2급 비상 발령: {type}', { type: emergencyLabel(e.type) }),
       h('p', null, `${t('{name} · {time} 발령', { name: e.declaredByName || t('가족'), time: formatDateTime(e.declaredAt) })}${e.message ? ` — ${e.message}` : ''}`),
       me.key === 'unknown' ? h('p', null, h('strong', null, t('아직 생존신고를 하지 않았습니다. 아래 버튼을 먼저 누르세요.'))) : null,
-      h('p', null, t('위험이 다가오고 있습니다. 비상 배낭·물·현금을 확인하고, 집합장소와 가는 길을 미리 봐 두세요. 실제 상황이 되면 다시 경보가 울립니다.')),
+      h('p', null, t('준위험 상황입니다. 비상 배낭·물·현금을 확인하고, 집합장소와 가는 길을 미리 봐 두세요. 1급 비상이 되면 경보음이 울립니다.')),
       h('div', { class: 'alert-actions' },
         h('a', { class: 'btn btn-sm', href: '#/meet' }, t('집합장소 확인')),
         h('a', { class: 'btn btn-sm btn-outline', href: `#/protocols/${encodeURIComponent(e.type)}` }, t('대처법 보기'))));
@@ -54,8 +55,8 @@ function situation(state) {
   const until = target ? (target.at > Date.now() ? target.at.getTime() : target.deadline.getTime()) : null;
   const actor = levelActor(e);
   const who = { name: actor.name || t('가족'), time: formatDateTime(realStartedAt(e)) };
-  return alertBox('emergency', t('실제 상황: {type}', { type: emergencyLabel(e.type) }),
-    h('p', null, `${e.escalatedBy ? t('{name} · {time} 실제 전환', who) : t('{name} · {time} 선언', who)}${e.message ? ` — ${e.message}` : ''}`),
+  return alertBox('emergency', t('1급 비상: {type}', { type: emergencyLabel(e.type) }),
+    h('p', null, `${e.escalatedBy ? t('{name} · {time} 1급 격상', who) : t('{name} · {time} 선언', who)}${e.message ? ` — ${e.message}` : ''}`),
     me.key === 'unknown' ? h('p', null, h('strong', null, t('아직 생존신고를 하지 않았습니다. 아래 버튼을 먼저 누르세요.'))) : null,
     target ? h('p', null, t('지금 갈 곳: '), h('strong', null, `${t('{rank}순위', { rank: target.rank })} ${target.name}`),
       ` · ${target.at > Date.now() ? t('도착까지') : t('대기 종료까지')} `, h('strong', { 'data-until': String(until) }, formatRemaining(until - Date.now()))) : null,
@@ -76,7 +77,7 @@ function tiles(state) {
   const admin = state.isAdmin ? [
     ['#/admin/logs', '📋', t('관리자 기록'), t('알림·신고·관리 작업 한눈에'), 'tile-admin'],
     ['#/admin/directory', '🗃', t('가족 정보 한눈에'), t('모든 가족의 개인정보 표'), 'tile-admin'],
-    ['#/emergency', '🚨', t('비상 경보'), state.emergency?.active ? t('실제 전환·해제·테스트') : t('경계·실제 발령, 테스트 알람'), 'tile-admin tile-danger'],
+    ['#/emergency', '🚨', t('비상 경보'), state.emergency?.active ? t('1급 격상·해제·테스트') : t('1급·2급 발령, 테스트 알람'), 'tile-admin tile-danger'],
   ] : [['#/emergency', '🚨', t('비상 경보'), state.me.declareCredits >= 1 ? t('선언권 1회 남음 · 경보음 시험') : t('선언권 없음 · 경보음 시험'), 'tile-danger']];
   return h('div', { class: 'tiles' }, [...list, ...admin].map(([href, icon, title, desc, cls = '']) => h('a', { class: `tile ${cls}`, href },
     h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon),
@@ -149,6 +150,8 @@ export function homeView({ state, live, onChange }) {
       h('p', { class: 'muted', style: { margin: 0, fontWeight: 600 } }, t('안녕하세요,')),
       h('h1', null, t('{name}님', { name: state.me.name }))),
     live(() => situation(state)),
+    // 관리자는 홈에서 바로 비상을 선언할 수 있다.
+    live(() => (state.emergency?.active ? null : quickDeclarePanel(state))),
 
     panel(t('생존 신고'), null,
       safeBtn,
@@ -194,6 +197,6 @@ export function homeView({ state, live, onChange }) {
 
     live(() => (state.emergency?.active || state.isAdmin ? null
       : alertBox('warning', null,
-        h('p', null, t('위험한데 아직 경보가 없다면 직접 경계나 실제 상황을 발령할 수 있습니다 (1회).'), ' ',
+        h('p', null, t('위험한데 아직 경보가 없다면 직접 2급이나 1급 비상을 발령할 수 있습니다 (1회).'), ' ',
           h('a', { href: '#/emergency' }, t('비상 경보 화면으로')))))));
 }

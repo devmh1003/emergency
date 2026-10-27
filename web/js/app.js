@@ -200,8 +200,8 @@ function renderHeader() {
 }
 
 function statusPill(level) {
-  if (level === 'real') return h('a', { class: 'pill pill-emergency', href: '#/meet' }, t('● 실제 상황'));
-  if (level === 'alert') return h('a', { class: 'pill pill-alert', href: '#/emergency' }, t('● 경계'));
+  if (level === 'real') return h('a', { class: 'pill pill-emergency', href: '#/meet' }, t('● 1급 비상'));
+  if (level === 'alert') return h('a', { class: 'pill pill-alert', href: '#/emergency' }, t('● 2급 비상'));
   return h('span', { class: 'pill pill-normal' }, t('● 평상시'));
 }
 
@@ -236,7 +236,7 @@ function emergencyBanner() {
     return h('a', { class: 'emergency-banner banner-alert', href: '#/emergency', role: 'alert' },
       h('div', { class: 'emergency-banner-inner' },
         h('span', { class: 'pulse-dot', 'aria-hidden': 'true' }),
-        h('strong', null, t('경계 발령 — {type}', { type: emergencyLabel(e.type) })),
+        h('strong', null, t('2급 비상 발령 — {type}', { type: emergencyLabel(e.type) })),
         h('span', { class: 'banner-target' }, t('생존신고를 하고 대비하세요'))));
   }
   const { currentRank, points } = meetingSchedule(state.meetingPoints, e);
@@ -244,7 +244,7 @@ function emergencyBanner() {
   return h('a', { class: 'emergency-banner', href: '#/meet', role: 'alert' },
     h('div', { class: 'emergency-banner-inner' },
       h('span', { class: 'pulse-dot', 'aria-hidden': 'true' }),
-      h('strong', null, t('실제 상황 — {type}', { type: emergencyLabel(e.type) })),
+      h('strong', null, t('1급 비상 — {type}', { type: emergencyLabel(e.type) })),
       target ? h('span', { class: 'banner-target' }, t('지금 갈 곳: {rank}순위 {name}', { rank: target.rank, name: target.name })) : h('span', null, t('집합장소 확인'))));
 }
 

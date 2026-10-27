@@ -56,7 +56,7 @@ function pushPanel(state) {
           }
         }),
       }, t('테스트 알림')),
-      h('button', { class: 'btn btn-outline', onClick: () => previewAlarm('real') }, t('🔊 경보음 시험'))),
+      h('button', { class: 'btn btn-outline', onClick: () => previewAlarm() }, t('🔊 경보음 시험'))),
     h('p', { class: 'muted small', style: { marginTop: '0.75rem' } }, t('알림은 휴대폰마다 따로 켜야 합니다. 사이트가 열려 있을 때는 경보음도 울립니다.')));
 }
 
@@ -287,7 +287,7 @@ export function printView({ state }) {
     h('div', { class: 'card print-card' },
       h('h2', null, t('{app} 카드', { app: t(config.appName || '가족 비상연락') })),
       myProfile,
-      h('h3', null, t('집합장소 (시간은 실제 상황 발생 기준)')),
+      h('h3', null, t('집합장소 (시간은 1급 비상 발생 기준)')),
       points.length ? h('table', null,
         h('thead', null, h('tr', null, h('th', null, t('순위')), h('th', null, t('장소')), h('th', null, t('시간')), h('th', null, t('좌표')))),
         h('tbody', null, points.map((p) => h('tr', null,

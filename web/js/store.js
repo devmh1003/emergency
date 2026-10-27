@@ -97,7 +97,7 @@ export function checkIn(me, type, pos, note = '', emergency = null) {
 
 // ---------- 비상선언 ----------
 
-/** level: 'alert'(경계) | 'real'(실제) */
+/** level: 'alert'(2급) | 'real'(1급) */
 export async function declareEmergency(me, { type, message, level }) {
   const isAdmin = me.role === 'admin';
   const batch = writeBatch(db);
@@ -109,9 +109,9 @@ export async function declareEmergency(me, { type, message, level }) {
     declaredBy: me.id,
     declaredByName: me.name,
     declaredAt: serverTimestamp(),
-    // 실제 상황이면 지금부터 집합 시간을 센다. 경계면 아직 세지 않는다.
+    // 1급 비상이면 지금부터 집합 시간을 센다. 2급이면 아직 세지 않는다.
     realAt: level === 'real' ? serverTimestamp() : deleteField(),
-    // 지난 비상의 "실제 전환" 기록은 지운다.
+    // 지난 비상의 "1급 격상" 기록은 지운다.
     escalatedBy: deleteField(),
     escalatedByName: deleteField(),
   };
@@ -128,7 +128,7 @@ export async function declareEmergency(me, { type, message, level }) {
   return notifyFamily();
 }
 
-/** 경계 → 실제 전환. 이때부터 집합 시간을 센다. 일반 가족은 선언권 1회를 쓴다. */
+/** 2급 → 1급 격상. 이때부터 집합 시간을 센다. 일반 가족은 선언권 1회를 쓴다. */
 export async function escalateEmergency(me, current, message = '') {
   const isAdmin = me.role === 'admin';
   const batch = writeBatch(db);
@@ -179,7 +179,7 @@ export const watchLatestAlarmTest = (cb, onError) => watchCollection('alarmTests
 export const watchAlarmTests = (cb, onError, max = 100) => watchCollection('alarmTests', cb, onError, orderBy('at', 'desc'), limit(max));
 export const watchAlarmAcks = (testId, cb, onError) => watchCollection(`alarmTests/${testId}/acks`, cb, onError);
 
-/** sound: 'alert'(경계음) | 'real'(실제음) */
+/** sound: 'alert'(2급) | 'real'(1급) */
 export async function sendAlarmTest(me, { message, sound }) {
   const testRef = doc(collection(db, 'alarmTests'));
   await setDoc(testRef, {

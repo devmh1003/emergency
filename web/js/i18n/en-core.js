@@ -1,10 +1,8 @@
 // 영어 번역 (core). 키는 화면의 한국어 원문, 값은 영어. web/js/i18n.js 참고.
 export const EN = {
   // ---------- logic.js: 경보 단계 (EMERGENCY_LEVELS) ----------
-  '경계': 'Alert',
-  '경계 발령': 'Alert issued',
-  '실제': 'Emergency',
-  '실제 상황': 'Real emergency',
+  '2급 비상 발령': 'Level 2 emergency declared',
+  '1급 비상': 'Level 1 emergency',
   '비상': 'Emergency',
 
   // ---------- logic.js: 집합장소 일정·시간 ----------
@@ -64,12 +62,12 @@ export const EN = {
 
   // ---------- logic.js: 비상 기록 제목·타임라인 ----------
   '비상 해제': 'Emergency ended',
-  '실제 상황 전환: {type}': 'Escalated to real emergency: {type}',
-  '경계 발령: {type}': 'Alert issued: {type}',
-  '실제 상황 선언: {type}': 'Real emergency declared: {type}',
+  '1급 격상: {type}': 'Raised to Level 1: {type}',
+  '2급 비상 발령: {type}': 'Level 2 emergency declared: {type}',
+  '1급 비상 선언: {type}': 'Level 1 emergency declared: {type}',
   '가족 전체 테스트 알람 ({sound})': 'Family-wide test alarm ({sound})',
-  '경계음': 'alert tone',
-  '실제음': 'emergency tone',
+  '2급': 'Level 2',
+  '1급': 'Level 1',
   '{rank}순위 집합장소 기록': 'Meeting point #{rank} check-in',
 
   // ---------- logic.js: 아이디·비밀코드 ----------
