@@ -147,13 +147,18 @@ async function networkFirstPage(request) {
   }
 }
 
+// "evilgoogleapis.com" 같은 다른 도메인이 걸리지 않도록 점(.) 경계까지 확인한다.
+function isDomainOrSub(hostname, domain) {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
   const url = new URL(request.url);
 
   // Firebase 데이터·인증·Worker 요청은 저장하지 않는다 (Firestore가 자체 오프라인 저장소를 쓴다).
-  if (url.hostname.endsWith('googleapis.com') || url.hostname.endsWith('workers.dev')) return;
+  if (isDomainOrSub(url.hostname, 'googleapis.com') || isDomainOrSub(url.hostname, 'workers.dev')) return;
 
   if (url.hostname === 'tile.openstreetmap.org') {
     event.respondWith(cacheFirst(request, TILE_CACHE, trimTiles));
