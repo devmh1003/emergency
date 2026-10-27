@@ -7,7 +7,7 @@ workers_dev = true
 
 [vars]
 # 아래 세 값을 내 프로젝트에 맞게 바꾼다.
-FIREBASE_PROJECT_ID = "your-firebase-project-id"
+FIREBASE_PROJECT_ID = "emergeny-404ab"
 ALLOWED_ORIGINS = "https://devmh1003.github.io"
 APP_URL = "https://devmh1003.github.io/emergency/"
 

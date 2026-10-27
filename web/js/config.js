@@ -7,16 +7,16 @@ self.FAMILY_CONFIG = {
 
   // Firebase 콘솔 → 프로젝트 설정 → 내 앱 → 웹 앱 → SDK 설정 및 구성
   firebase: {
-    apiKey: '',
-    authDomain: '',
-    projectId: '',
-    storageBucket: '',
-    messagingSenderId: '',
-    appId: '',
+    apiKey: 'AIzaSyAJPVOGjrrYkKi0B5ckAl6AYE1woo4SvKM',
+    authDomain: 'emergeny-404ab.firebaseapp.com',
+    projectId: 'emergeny-404ab',
+    storageBucket: 'emergeny-404ab.firebasestorage.app',
+    messagingSenderId: '116502180839',
+    appId: '1:116502180839:web:137984ec6d81ebca6e8342',
   },
 
   // Firebase 콘솔 → 프로젝트 설정 → 클라우드 메시징 → 웹 푸시 인증서 → 키 쌍
-  vapidKey: '',
+  vapidKey: 'BJws64jbgxN6lgzMAN-vWT5hUNsab6Z5VNT6tEWYkQGK6imHU9R02B5tJFhCcvEWOfgN9QV6jV-puIZ5Dz-vqvQ',
 
   // Cloudflare Worker 주소 (예: https://family-emergency.내계정.workers.dev)
   workerUrl: '',
