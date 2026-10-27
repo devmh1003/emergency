@@ -19,7 +19,7 @@ self.FAMILY_CONFIG = {
   vapidKey: 'BJws64jbgxN6lgzMAN-vWT5hUNsab6Z5VNT6tEWYkQGK6imHU9R02B5tJFhCcvEWOfgN9QV6jV-puIZ5Dz-vqvQ',
 
   // Cloudflare Worker 주소 (예: https://family-emergency.내계정.workers.dev)
-  workerUrl: '',
+  workerUrl: 'https://family-emergency.devmh1003.workers.dev',
 
   // 로컬 개발용: true 이고 localhost 에서 열면 Firebase 에뮬레이터에 연결한다.
   useEmulators: false,
