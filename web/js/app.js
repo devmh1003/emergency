@@ -1,5 +1,5 @@
 // 앱 시작점: 로그인 상태 확인, 실시간 데이터 구독, 화면 전환, 머리말·메뉴·바닥글.
-import { isConfigured, watchAuth, config } from './firebase.js';
+import { isConfigured, watchAuth, config, logout } from './firebase.js';
 import { h, mount, toast, savedFontScale } from './dom.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from './data/protocols.en.js';
@@ -361,7 +361,7 @@ function startSubscriptions(uid) {
   meUnsub = store.watchDoc(['members', uid], (me, snap) => {
     // 방금 등록한 문서가 아직 서버에 저장되기 전이면 기다린다. 서버가 모르는 상태로 구독하면 거부된다.
     if (!active && snap.metadata.hasPendingWrites) return;
-    state.me = me && me.active && me.gen === state.gates?.gen ? me : null;
+    state.me = me && me.active && state.gates && me.gen === state.gates.gen ? me : null;
     store.setActor(state.me);
     if (!state.me) {
       active = false;
@@ -512,12 +512,20 @@ function start() {
       return;
     }
     // 세대(gen)를 알아야 내 계정이 지금 유효한지 판단한다. 오프라인이면 휴대폰에 저장된 값을 쓴다.
+    let gatesChecked = false;
     try {
+      await store.setupSettled();
       state.gates = await store.getGates() || state.gates;
+      gatesChecked = true;
     } catch (err) {
       console.warn('접속 정보를 불러오지 못했습니다', err);
     }
     if (state.user !== user) return;
+    // 아직 처음 설정 전인데 예전 방식 계정으로 로그인돼 있으면, 로그아웃해서 처음 설정 화면을 보여준다.
+    if (gatesChecked && !state.gates) {
+      await logout();
+      return;
+    }
     const kind = gateKind(user);
     if (kind === 'backup') mount(viewEl, backupView());
     else if (kind) mount(viewEl, pickerView({ kind }));

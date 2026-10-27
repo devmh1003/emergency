@@ -304,11 +304,23 @@ async function codeInUse(gates, code, except) {
   return null;
 }
 
+let setupRunning = null;
+
+/** 처음 설정이 진행 중이면 끝날 때까지 기다린다 (첫 관리자로 로그인한 직후, 관문 문서가 저장되기 전일 수 있다). */
+export async function setupSettled() {
+  await setupRunning?.catch(() => {});
+}
+
 /**
  * 처음 설정: 관문 계정 3개와 첫 관리자 계정을 만들고, 첫 관리자로 로그인한다.
  * 예전 방식으로 저장된 가족·관리자는 새 세대가 시작되면서 자동으로 접근이 막힌다.
  */
-export async function setupAccess({ name, phone, family, admin, backup }) {
+export function setupAccess(form) {
+  setupRunning = runSetup(form);
+  return setupRunning.finally(() => { setupRunning = null; });
+}
+
+async function runSetup({ name, phone, family, admin, backup }) {
   const gen = Math.floor(Date.now() / 1000);
   const gate = {};
   for (const [kind, code] of [['family', family], ['admin', admin], ['backup', backup]]) {
