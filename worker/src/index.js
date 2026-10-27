@@ -158,7 +158,19 @@ async function authenticate(request, env, fs) {
   return { uid, member };
 }
 
-async function handleNotify(env, fs, accessToken) {
+/** 관리자 기록 화면에 알림 발송 결과를 남긴다. 실패해도 발송 결과에는 영향이 없다. */
+async function logNotify(fs, caller, action, result, extra = '') {
+  const detail = `${result.sent}건 성공${result.failed ? `, ${result.failed}건 실패` : ''}${extra ? ` · ${extra}` : ''}`;
+  try {
+    await fs.create('auditLog', {
+      action, target: '', targetName: '', detail, by: caller.uid, byName: caller.member.name || '', at: new Date(),
+    });
+  } catch (err) {
+    console.warn('알림 기록 실패', err);
+  }
+}
+
+async function handleNotify(env, fs, accessToken, caller) {
   const emergency = await fs.get('emergency/current');
   const key = notificationKey(emergency);
   if (!key) return { sent: 0, skipped: '보낼 비상 상태가 없습니다' };
@@ -169,15 +181,19 @@ async function handleNotify(env, fs, accessToken) {
   // 삭제·비활성화된 가족의 기기에는 보내지 않는다.
   const active = new Set((await fs.list('members')).filter((m) => m.active === true).map((m) => m.id));
   const tokens = (await fs.list('pushTokens')).filter((t) => active.has(t.uid));
-  return sendToTokens(env, fs, accessToken, tokens, notificationContent(emergency));
+  const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(emergency));
+  await logNotify(fs, caller, emergency.active ? 'notify.emergency' : 'notify.end', result, `기기 ${tokens.length}대 대상`);
+  return result;
 }
 
-async function handleTestPush(env, fs, accessToken, uid) {
-  const tokens = (await fs.list('pushTokens')).filter((t) => t.uid === uid);
-  return sendToTokens(env, fs, accessToken, tokens, {
+async function handleTestPush(env, fs, accessToken, caller) {
+  const tokens = (await fs.list('pushTokens')).filter((t) => t.uid === caller.uid);
+  const result = await sendToTokens(env, fs, accessToken, tokens, {
     title: '🔔 테스트 알림',
     body: '이 기기는 비상선언 알림을 받을 수 있습니다.',
   });
+  await logNotify(fs, caller, 'notify.test', result);
+  return result;
 }
 
 async function handleAdminUser(env, accessToken, caller, body) {
@@ -232,8 +248,8 @@ export default {
       const accessToken = await getToken();
 
       let result;
-      if (url.pathname === '/notify') result = await handleNotify(env, fs, accessToken);
-      else if (url.pathname === '/test-push') result = await handleTestPush(env, fs, accessToken, caller.uid);
+      if (url.pathname === '/notify') result = await handleNotify(env, fs, accessToken, caller);
+      else if (url.pathname === '/test-push') result = await handleTestPush(env, fs, accessToken, caller);
       else if (url.pathname === '/admin/user') result = await handleAdminUser(env, accessToken, caller, body);
       else throw new HttpError(404, '없는 주소입니다');
       return json(result, 200, origin);

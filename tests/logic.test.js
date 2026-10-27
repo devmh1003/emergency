@@ -135,3 +135,68 @@ test('기본 프로토콜은 id와 체크리스트 id가 겹치지 않는다', (
     assert.ok(p.steps.length <= 10 && p.checklist.length <= 80);
   }
 });
+
+test('아이디 로그인 주소 변환', async () => {
+  const { loginEmail, loginIdFromEmail, isValidLoginId, normalizeLoginId, secretCodeProblem } = await import('../web/js/logic.js');
+  assert.equal(loginEmail(' Dad ', 'p1'), 'dad@p1.firebaseapp.com');
+  assert.equal(loginEmail('old@mail.com', 'p1'), 'old@mail.com');
+  assert.equal(loginIdFromEmail('dad@p1.firebaseapp.com', 'p1'), 'dad');
+  assert.equal(loginIdFromEmail('old@mail.com', 'p1'), 'old@mail.com');
+  assert.equal(normalizeLoginId('  MoM_1 '), 'mom_1');
+  assert.ok(isValidLoginId('mom'));
+  assert.ok(isValidLoginId('kim.minho-2'));
+  assert.ok(!isValidLoginId('ab'));
+  assert.ok(!isValidLoginId('_mom'));
+  assert.ok(!isValidLoginId('엄마'));
+  assert.ok(!isValidLoginId('a'.repeat(21)));
+  assert.equal(secretCodeProblem('12345'), '비밀코드는 6자 이상이어야 합니다.');
+  assert.match(secretCodeProblem('111111'), /쉬운/);
+  assert.match(secretCodeProblem('123456'), /쉬운/);
+  assert.equal(secretCodeProblem('482913'), null);
+});
+
+test('오프라인 거리·방향 계산', async () => {
+  const { distanceMeters, bearingDegrees, compassLabel, formatDistance, routeHint, formatDms } = await import('../web/js/logic.js');
+  const seoulCityHall = { lat: 37.5663, lng: 126.9779 };
+  const gangnamStation = { lat: 37.4979, lng: 127.0276 };
+  const d = distanceMeters(seoulCityHall, gangnamStation);
+  assert.ok(d > 8500 && d < 9000, `거리 ${d}`);
+  const b = bearingDegrees(seoulCityHall, gangnamStation);
+  assert.ok(b > 140 && b < 160, `방위 ${b}`);
+  assert.equal(compassLabel(b).label, '남동쪽');
+  assert.equal(compassLabel(0).label, '북쪽');
+  assert.equal(compassLabel(359).label, '북쪽');
+  assert.equal(formatDistance(234), '230m');
+  assert.equal(formatDistance(2345), '2.3km');
+  assert.equal(formatDistance(23456), '23km');
+  assert.equal(routeHint({ lat: null, lng: null }, gangnamStation), null);
+  assert.match(routeHint(seoulCityHall, gangnamStation).text, /km · 남동쪽/);
+  assert.equal(formatDms(37.5, -0.25), "N 37° 30.000', W 0° 15.000'");
+});
+
+test('CSV는 BOM을 붙이고 수식 실행을 막는다', async () => {
+  const { toCsv } = await import('../web/js/logic.js');
+  const csv = toCsv(['이름', '메모'], [['엄마', '=HYPERLINK("x")'], ['아빠', '쉼표, 있음']]);
+  assert.ok(csv.startsWith('﻿이름,메모'));
+  assert.ok(csv.includes(`"'=HYPERLINK(""x"")"`));
+  assert.ok(csv.includes('"쉼표, 있음"'));
+});
+
+test('기록을 시간 역순 하나의 목록으로 합치고 거른다', async () => {
+  const { buildTimeline, filterTimeline } = await import('../web/js/logic.js');
+  const t = (h) => new Date(`2026-10-27T${String(h).padStart(2, '0')}:00:00`);
+  const items = buildTimeline({
+    emergencyLog: [{ id: '1', action: 'declare', type: 'earthquake', by: 'a', byName: '아빠', at: t(9) }],
+    checkins: [{ id: '2', type: 'help', uid: 'm', name: '엄마', note: '다리 다침', clientAt: t(10) }],
+    meetingLogs: [{ id: '3', rank: 1, uid: 'k', name: '아이', message: '도착', clientAt: t(11) }],
+    auditLog: [{ id: '4', action: 'notify.emergency', by: 'a', byName: '아빠', detail: '3건 발송', at: t(9) }],
+  });
+  assert.equal(items.length, 4);
+  assert.equal(items[0].kind, 'meet');
+  assert.equal(items[1].kind, 'help');
+  assert.ok(['emergency', 'notify'].includes(items[2].kind));
+  assert.equal(filterTimeline(items, { kind: 'help' }).length, 1);
+  assert.equal(filterTimeline(items, { who: 'a' }).length, 2);
+  assert.equal(filterTimeline(items, { q: '다리' }).length, 1);
+  assert.equal(filterTimeline(items, { days: 1 }, new Date('2026-10-30T00:00:00')).length, 0);
+});

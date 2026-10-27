@@ -1,5 +1,5 @@
 // 관리자 화면: 가족 추가·수정, 집합장소 설정, 대처법 편집
-import { h, field, select, formData, toast, busy, card, pageHeader, empty } from '../dom.js';
+import { h, field, select, formData, toast, busy, card, panel, pageHeader, empty, alertBox } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, getProfile, saveMeetingPoint, deleteMeetingPoint,
@@ -9,48 +9,102 @@ import { getBestPosition } from '../geo.js';
 import { mapView } from '../map.js';
 import {
   BLOOD_TYPES, GENDERS, formatOffset, scheduleWarnings, toLocalInput, toDate, parseSteps, stepsToText,
-  parseChecklist, hasLocation,
+  parseChecklist, hasLocation, isValidLoginId, normalizeLoginId, secretCodeProblem, LOGIN_ID_RULE,
 } from '../logic.js';
 
 const MAX_MEMBERS = 20;
+const MAX_LINKS = 3;
+
+/** 외우기 쉬운 8자리 숫자 비밀코드 (같은 숫자 반복은 피한다) */
+function randomCode() {
+  const a = new Uint32Array(1);
+  let code;
+  do {
+    crypto.getRandomValues(a);
+    code = String(a[0] % 100_000_000).padStart(8, '0');
+  } while (secretCodeProblem(code));
+  return code;
+}
 
 // ---------- 가족 추가·수정 ----------
 
 export function memberEditView({ state, params, navigate }) {
   const isNew = params.uid === 'new';
   const m = isNew ? null : state.members.find((x) => x.id === params.uid);
-  if (!isNew && !m) return h('div', { class: 'page' }, pageHeader('가족 수정'), empty('없는 가족입니다.'));
+  const crumbs = [{ label: '가족 현황', href: '#/family' }];
+  if (!isNew && !m) return h('div', { class: 'page' }, pageHeader('가족 수정', { crumbs }), empty('없는 가족입니다.'));
   if (isNew && state.members.length >= MAX_MEMBERS) {
-    return h('div', { class: 'page' }, pageHeader('가족 추가'), empty(`가족은 최대 ${MAX_MEMBERS}명까지 등록할 수 있습니다.`));
+    return h('div', { class: 'page' }, pageHeader('가족 추가', { crumbs }), empty(`가족은 최대 ${MAX_MEMBERS}명까지 등록할 수 있습니다.`));
   }
   const isSelf = m?.id === state.me.id;
 
   const profileFields = h('div', { class: 'stack' }, h('p', { class: 'muted' }, '불러오는 중…'));
-  const fillProfile = (p = {}) => profileFields.replaceChildren(
-    field('성별', select('gender', ['', ...GENDERS].map((g) => ({ value: g, label: g || '선택 안 함' })), p.gender || '')),
-    field('생년월일', h('input', { name: 'birthDate', type: 'date', value: p.birthDate || '' }), '나이는 자동으로 계산됩니다'),
-    field('혈액형', select('bloodType', ['', ...BLOOD_TYPES].map((b) => ({ value: b, label: b || '선택 안 함' })), p.bloodType || '')),
-    isNew ? null : field('이메일 (연락용)', h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' }), '로그인 이메일은 바뀌지 않습니다'),
-    field('집주소', h('input', { name: 'address', maxlength: 200, value: p.address || '', autocomplete: 'off' })),
-    field('비상연락처 (가족 외)', h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '', placeholder: '예: 이모 010-0000-0000' })),
-    field('의료 메모', h('textarea', { name: 'medical', rows: 3, maxlength: 500, value: p.medical || '', placeholder: '지병, 복용약, 알레르기' })));
+  const loginInfo = h('div');
+  const fillProfile = (p = {}) => {
+    profileFields.replaceChildren(
+      h('div', { class: 'field-row' },
+        field('성별', select('gender', ['', ...GENDERS].map((g) => ({ value: g, label: g || '선택 안 함' })), p.gender || '')),
+        field('생년월일', h('input', { name: 'birthDate', type: 'date', value: p.birthDate || '' }), '나이는 자동으로 계산됩니다')),
+      h('div', { class: 'field-row' },
+        field('혈액형', select('bloodType', ['', ...BLOOD_TYPES].map((b) => ({ value: b, label: b || '선택 안 함' })), p.bloodType || '')),
+        field('이메일 (연락용)', h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' }))),
+      field('집주소', h('input', { name: 'address', maxlength: 200, value: p.address || '', autocomplete: 'off' })),
+      field('비상연락처 (가족 외)', h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '', placeholder: '예: 이모 010-0000-0000' })),
+      field('의료 메모', h('textarea', { name: 'medical', rows: 3, maxlength: 500, value: p.medical || '', placeholder: '지병, 복용약, 알레르기' })));
+    if (!isNew) {
+      loginInfo.replaceChildren(
+        h('div', { class: 'info-row' }, h('span', null, '로그인 아이디'), h('span', { class: 'mono' }, p.loginId || p.email || '(기록 없음)')),
+        h('p', { class: 'small muted', style: { marginTop: '0.5rem' } }, '아이디는 바꿀 수 없습니다. 비밀코드는 가족 상세 화면의 "비밀코드 초기화"로 바꿉니다.'));
+    }
+  };
   if (isNew) fillProfile();
   else getProfile(m.id).then(fillProfile).catch((err) => profileFields.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
 
-  const form = h('form', { class: 'stack' },
-    card(h('h2', null, '기본 정보 (가족 모두에게 보임)'),
-      field('이름', h('input', { name: 'name', required: true, maxlength: 40, value: m?.name || '' })),
-      field('전화번호', h('input', { name: 'phone', type: 'tel', maxlength: 30, value: m?.phone || '', inputmode: 'tel' })),
-      field('권한', select('role', [{ value: 'member', label: '가족' }, { value: 'admin', label: '관리자' }], m?.role || 'member'),
-        isSelf ? '본인의 관리자 권한은 다른 관리자가 바꿔야 합니다' : '관리자는 여러 명 둘 수 있습니다'),
-      field('표시 순서', h('input', { name: 'order', type: 'number', min: 0, max: 99, value: String(m?.order ?? state.members.length + 1) }))),
-    isNew ? card(h('h2', null, '로그인 계정'),
-      field('이메일 (로그인 아이디)', h('input', { name: 'email', type: 'email', required: true, autocomplete: 'off' })),
-      field('첫 비밀번호', h('input', { name: 'password', type: 'text', required: true, minlength: 8, autocomplete: 'new-password' }), '8자 이상. 본인에게 알려 주고 로그인 후 바꾸게 하세요.')) : null,
-    card(h('h2', null, '개인정보 (본인과 관리자만 보임)'), profileFields),
+  // 볼 수 있는 가족 (최대 3명)
+  const others = state.members.filter((x) => x.id !== m?.id);
+  const current = new Set(m?.links || []);
+  const linkBoxes = others.map((x) => h('input', { type: 'checkbox', value: x.id, checked: current.has(x.id) }));
+  const linkHint = h('p', { class: 'small muted' });
+  const updateLinkHint = () => {
+    const n = linkBoxes.filter((b) => b.checked).length;
+    linkHint.textContent = `${n}/${MAX_LINKS}명 선택`;
+    for (const b of linkBoxes) b.disabled = !b.checked && n >= MAX_LINKS;
+  };
+  linkBoxes.forEach((b) => b.addEventListener('change', updateLinkHint));
+  updateLinkHint();
+
+  const codeInputEl = h('input', { name: 'code', type: 'text', required: true, minlength: 6, autocomplete: 'off', spellcheck: 'false' });
+
+  const form = h('form', { class: 'stack', style: { gap: '1.25rem' } },
+    panel('기본 정보', null,
+      h('div', { class: 'stack' },
+        h('div', { class: 'field-row' },
+          field('이름', h('input', { name: 'name', required: true, maxlength: 40, value: m?.name || '' })),
+          field('전화번호', h('input', { name: 'phone', type: 'tel', maxlength: 30, value: m?.phone || '', inputmode: 'tel' }))),
+        h('div', { class: 'field-row' },
+          field('권한', select('role', [{ value: 'member', label: '가족' }, { value: 'admin', label: '관리자' }], m?.role || 'member'),
+            isSelf ? '본인의 관리자 권한은 다른 관리자가 바꿔야 합니다' : '관리자는 여러 명 둘 수 있고, 가족 전체를 봅니다'),
+          field('표시 순서', h('input', { name: 'order', type: 'number', min: 0, max: 99, value: String(m?.order ?? state.members.length + 1) }))))),
+    panel('로그인', null,
+      isNew
+        ? h('div', { class: 'stack' },
+          field('아이디', h('input', { name: 'loginId', required: true, maxlength: 20, autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', placeholder: '예: mom, kim.minho' }), LOGIN_ID_RULE),
+          field('첫 비밀코드', h('div', { class: 'input-group' }, codeInputEl,
+            h('button', { class: 'btn btn-base btn-sm', type: 'button', onClick: () => { codeInputEl.value = randomCode(); } }, '자동 생성')),
+          '6자 이상. 본인에게 알려 주고 처음 로그인한 뒤 바꾸게 하세요.'))
+        : loginInfo),
+    panel(`볼 수 있는 가족 (최대 ${MAX_LINKS}명)`, null,
+      h('p', { class: 'small muted' }, '이 사람이 상태·위치·전화번호·비상 정보를 볼 수 있는 가족입니다. 관리자 권한이면 지정과 상관없이 모두 봅니다.'),
+      others.length
+        ? h('div', { class: 'grid grid-3', style: { gap: '0.25rem 1rem' } }, others.map((x, i) => h('label', { class: 'check' }, linkBoxes[i], h('span', null, x.name, x.role === 'admin' ? ' (관리자)' : ''))))
+        : empty('다른 가족이 없습니다.'),
+      linkHint),
+    panel('개인정보', null,
+      h('p', { class: 'small muted' }, '본인, 관리자, 이 사람을 "볼 수 있는 가족"으로 지정받은 사람만 봅니다.'),
+      profileFields),
     h('div', { class: 'row' },
-      h('button', { class: 'btn', type: 'button', onClick: () => history.back() }, '취소'),
-      h('button', { class: 'btn btn-primary', type: 'submit' }, isNew ? '가족 추가' : '저장')));
+      h('button', { class: 'btn btn-outline', type: 'button', onClick: () => history.back() }, '취소'),
+      h('button', { class: 'btn', type: 'submit' }, isNew ? '가족 추가' : '저장')));
 
   if (isSelf) form.elements.role.disabled = true;
 
@@ -62,6 +116,7 @@ export function memberEditView({ state, params, navigate }) {
       phone: d.phone,
       role: isSelf ? m.role : d.role,
       order: Number(d.order) || 0,
+      links: linkBoxes.filter((b) => b.checked).map((b) => b.value).slice(0, MAX_LINKS),
       gender: d.gender,
       birthDate: d.birthDate,
       bloodType: d.bloodType,
@@ -70,11 +125,19 @@ export function memberEditView({ state, params, navigate }) {
       emergencyContact: d.emergencyContact,
       medical: d.medical,
     };
+    if (isNew) {
+      const loginId = normalizeLoginId(d.loginId);
+      if (!isValidLoginId(loginId)) { toast(`아이디는 ${LOGIN_ID_RULE}입니다.`, 'error'); return; }
+      const problem = secretCodeProblem(d.code);
+      if (problem) { toast(problem, 'error'); return; }
+      data.loginId = loginId;
+      data.code = d.code;
+    }
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
         if (isNew) {
-          const uid = await createMember({ ...data, password: d.password, active: true, declareCredits: 1 });
-          toast(`${data.name}님을 추가했습니다. 이메일과 첫 비밀번호를 알려 주세요.`);
+          const uid = await createMember({ ...data, active: true, declareCredits: 1 });
+          toast(`${data.name}님을 추가했습니다. 아이디 "${data.loginId}"와 첫 비밀코드를 알려 주세요.`);
           navigate(`/member/${encodeURIComponent(uid)}`);
         } else {
           await updateMember(m.id, data);
@@ -87,14 +150,17 @@ export function memberEditView({ state, params, navigate }) {
     });
   });
 
-  return h('div', { class: 'page' }, pageHeader(isNew ? '가족 추가' : `${m.name} 수정`), form);
+  return h('div', { class: 'page' },
+    pageHeader(isNew ? '가족 추가' : `${m.name} 정보 수정`, { crumbs }),
+    isNew ? alertBox('info', null, h('p', null, '저장하면 로그인 계정이 바로 만들어집니다. 아이디와 첫 비밀코드를 본인에게 직접 알려 주세요.')) : null,
+    form);
 }
 
 // ---------- 집합장소 ----------
 
 export function meetEditListView({ state, live }) {
   return h('div', { class: 'page' },
-    pageHeader('집합장소 설정'),
+    pageHeader('집합장소 설정', { crumbs: [{ label: '집합장소', href: '#/meet' }] }),
     card(h('p', null, '1순위부터 차례로 정하세요. 시간은 "비상 발생 후 몇 시간"으로 정하고, 비상이 선언되면 실제 시각으로 계산됩니다.'),
       h('p', { class: 'muted small' }, '각 장소에서 "대기 시간"이 지나도 모두 모이지 못하면 다음 순위로 이동합니다.')),
     live(() => {
@@ -156,15 +222,15 @@ export function meetEditView({ state, params, navigate }) {
     field('안내 메모', h('textarea', { name: 'note', rows: 3, maxlength: 500, value: p.note || '', placeholder: '예: 정문 앞 시계탑 아래. 못 들어가면 길 건너 편의점.' })),
     h('div', { class: 'row' },
       p.name ? h('button', {
-        class: 'btn btn-danger', type: 'button',
+        class: 'btn btn-secondary', type: 'button',
         onClick: (e) => {
           if (!confirm(`${rank}순위 집합장소를 지울까요?`)) return;
           busy(e.currentTarget, async () => {
-            try { await deleteMeetingPoint(rank); toast('지웠습니다.'); navigate('/admin/meet'); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { await deleteMeetingPoint(rank, p.name); toast('지웠습니다.'); navigate('/admin/meet'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },
       }, '삭제') : null,
-      h('button', { class: 'btn btn-primary', type: 'submit' }, '저장')));
+      h('button', { class: 'btn', type: 'submit' }, '저장')));
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -186,14 +252,14 @@ export function meetEditView({ state, params, navigate }) {
     });
   });
 
-  return h('div', { class: 'page' }, pageHeader(`${rank}순위 집합장소`), card(form));
+  return h('div', { class: 'page' }, pageHeader(`${rank}순위 집합장소`, { crumbs: [{ label: '집합장소', href: '#/meet' }, { label: '설정', href: '#/admin/meet' }] }), card(form));
 }
 
 // ---------- 대처법 ----------
 
 export function protocolAdminView({ state, live }) {
   return h('div', { class: 'page' },
-    pageHeader('대처법 관리', h('a', { class: 'btn btn-primary btn-sm', href: '#/admin/protocols/new' }, '+ 새 상황')),
+    pageHeader('대처법 관리', { crumbs: [{ label: '상황별 대처법', href: '#/protocols' }] }, h('a', { class: 'btn', href: '#/admin/protocols/new' }, '+ 새 상황')),
     live(() => card(
       state.serverProtocols.length
         ? h('p', null, `서버에 ${state.serverProtocols.length}개의 프로토콜이 있습니다.`)
@@ -226,21 +292,23 @@ export function protocolEditView({ state, params, navigate }) {
       field('순서', h('input', { name: 'order', type: 'number', min: 0, max: 99, value: String(p.order ?? 50) }))),
     field('제목', h('input', { name: 'title', required: true, maxlength: 60, value: p.title || '' })),
     field('요약', h('input', { name: 'summary', maxlength: 300, value: p.summary || '' })),
+    field('꼭 기억할 것', h('textarea', { name: 'keyPoints', rows: 4, value: (p.keyPoints || []).map((k) => `- ${k}`).join('\n') }),
+      '한 줄에 하나씩, 최대 6개. 상세 화면 맨 위 요약 상자에 표시됩니다.'),
     field('대처법', h('textarea', { name: 'steps', rows: 14, value: stepsToText(p.steps) }),
       '"## 단계 이름" 줄로 단계를 나누고, 그 아래 한 줄에 하나씩 할 일을 적습니다.'),
     field('체크리스트', h('textarea', { name: 'checklist', rows: 10, value: (p.checklist || []).map((i) => `- ${i.text}`).join('\n') }),
       '한 줄에 하나씩. 문구를 그대로 두면 가족들의 체크 상태가 유지됩니다.'),
     h('div', { class: 'row' },
       !isNew ? h('button', {
-        class: 'btn btn-danger', type: 'button',
+        class: 'btn btn-secondary', type: 'button',
         onClick: (e) => {
           if (!confirm(`"${p.title}"을(를) 지울까요?`)) return;
           busy(e.currentTarget, async () => {
-            try { await deleteProtocol(p.id); toast('지웠습니다.'); navigate('/admin/protocols'); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { await deleteProtocol(p.id, p.title); toast('지웠습니다.'); navigate('/admin/protocols'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },
       }, '삭제') : null,
-      h('button', { class: 'btn btn-primary', type: 'submit' }, '저장')));
+      h('button', { class: 'btn', type: 'submit' }, '저장')));
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -254,6 +322,7 @@ export function protocolEditView({ state, params, navigate }) {
           icon: d.icon,
           order: d.order,
           summary: d.summary,
+          keyPoints: d.keyPoints.split('\n').map((l) => l.trim().replace(/^[-*•]\s*/, '')).filter(Boolean).slice(0, 6).map((l) => l.slice(0, 200)),
           steps: parseSteps(d.steps),
           checklist: parseChecklist(d.checklist, p.checklist || []),
         });
@@ -265,5 +334,5 @@ export function protocolEditView({ state, params, navigate }) {
     });
   });
 
-  return h('div', { class: 'page' }, pageHeader(isNew ? '새 상황 추가' : `${p.title} 편집`), card(form));
+  return h('div', { class: 'page' }, pageHeader(isNew ? '새 상황 추가' : `${p.title} 편집`, { crumbs: [{ label: '상황별 대처법', href: '#/protocols' }, { label: '관리', href: '#/admin/protocols' }] }), card(form));
 }

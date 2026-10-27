@@ -3,7 +3,7 @@ import {
   doc, collection, getDoc, getDocs, setDoc, deleteDoc, onSnapshot, query, where, orderBy, limit,
   writeBatch, serverTimestamp, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
-import { db, createAccountForOther, createOwnAccount, callWorker } from './firebase.js';
+import { db, createAccountForOther, callWorker } from './firebase.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
 
 const ref = (...path) => doc(db, ...path);
@@ -32,6 +32,12 @@ export const watchEmergencyLog = (cb, onError) => watchCollection('emergencyLog'
 
 export function watchCheckins(uid, cb, onError, max = 100) {
   return watchCollection('checkins', cb, onError, where('uid', '==', uid), orderBy('clientAt', 'desc'), limit(max));
+}
+
+/** 컬렉션 전체를 한 번 읽는다 (관리자 화면용: profiles, checklists) */
+export async function listCollection(name) {
+  const snap = await getDocs(collection(db, name));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function getProfile(uid) {
@@ -136,9 +142,44 @@ export async function notifyFamily() {
   }
 }
 
+// ---------- 관리 기록 ----------
+
+// 관리 기록에 남길 "누가". 앱이 로그인한 가족 정보를 넣어 준다.
+let actor = null;
+export function setActor(me) {
+  actor = me;
+}
+
+/** 같은 일괄 쓰기에 관리 기록 한 줄을 더한다. 관리자가 아니면 남기지 않는다(규칙상 거부되므로). */
+function addAudit(batch, action, { target = '', targetName = '', detail = '' } = {}) {
+  if (actor?.role !== 'admin') return;
+  batch.set(doc(collection(db, 'auditLog')), {
+    action,
+    target: String(target).slice(0, 128),
+    targetName: String(targetName).slice(0, 60),
+    detail: String(detail).slice(0, 300),
+    by: actor.id,
+    byName: actor.name,
+    at: serverTimestamp(),
+  });
+}
+
+/** 단독 관리 기록 (Worker 작업처럼 Firestore 쓰기가 따로 없는 경우) */
+export async function audit(action, info) {
+  const batch = writeBatch(db);
+  addAudit(batch, action, info);
+  await batch.commit().catch((err) => console.warn('관리 기록 실패', err));
+}
+
+// 관리자 기록 화면용 구독
+export const watchAuditLog = (cb, onError, max = 300) => watchCollection('auditLog', cb, onError, orderBy('at', 'desc'), limit(max));
+export const watchAllCheckins = (cb, onError, max = 500) => watchCollection('checkins', cb, onError, orderBy('clientAt', 'desc'), limit(max));
+export const watchAllEmergencyLog = (cb, onError, max = 200) => watchCollection('emergencyLog', cb, onError, orderBy('at', 'desc'), limit(max));
+export const watchAllMeetingLogs = (cb, onError, max = 300) => watchCollection('meetingLogs', cb, onError, orderBy('clientAt', 'desc'), limit(max));
+
 // ---------- 가족 관리 (관리자) ----------
 
-const MEMBER_FIELDS = ['name', 'phone', 'role', 'active', 'declareCredits', 'order'];
+const MEMBER_FIELDS = ['name', 'phone', 'role', 'active', 'declareCredits', 'order', 'links'];
 const PROFILE_FIELDS = ['gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact'];
 
 function pick(obj, keys) {
@@ -148,7 +189,7 @@ function pick(obj, keys) {
 }
 
 export async function createMember(form) {
-  const uid = await createAccountForOther(form.email, form.password);
+  const uid = await createAccountForOther(form.loginId, form.code);
   const batch = writeBatch(db);
   batch.set(ref('members', uid), {
     ...pick(form, MEMBER_FIELDS),
@@ -156,15 +197,23 @@ export async function createMember(form) {
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
-  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() });
+  batch.set(ref('profiles', uid), { loginId: form.loginId, ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() });
+  addAudit(batch, 'member.create', { target: uid, targetName: form.name, detail: `아이디 ${form.loginId} · ${form.role === 'admin' ? '관리자' : '가족'}` });
   await batch.commit();
   return uid;
 }
 
-export async function updateMember(uid, form) {
+const CHANGE_LABELS = { role: '권한', active: '접근', declareCredits: '선언권', name: '이름', phone: '전화번호', links: '볼 수 있는 가족' };
+
+export async function updateMember(uid, form, targetName = form.name) {
   const batch = writeBatch(db);
   batch.set(ref('members', uid), { ...pick(form, MEMBER_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
   batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
+  let action = 'member.update';
+  if (Object.keys(form).length === 1 && 'active' in form) action = form.active ? 'member.activate' : 'member.deactivate';
+  else if (Object.keys(form).length === 1 && 'declareCredits' in form) action = 'member.credit';
+  const changed = Object.keys(form).filter((k) => CHANGE_LABELS[k]).map((k) => CHANGE_LABELS[k]);
+  addAudit(batch, action, { target: uid, targetName, detail: changed.length ? `${changed.join(', ')} 저장` : '개인정보 저장' });
   await batch.commit();
 }
 
@@ -177,11 +226,12 @@ export async function updateMyInfo(uid, form) {
 }
 
 /** 가족 삭제: 데이터 접근을 먼저 끊고(members 삭제), 로그인 계정은 Worker가 지운다. */
-export async function deleteMember(uid) {
+export async function deleteMember(uid, name) {
   const batch = writeBatch(db);
   batch.delete(ref('members', uid));
   batch.delete(ref('profiles', uid));
   batch.delete(ref('checklists', uid));
+  addAudit(batch, 'member.delete', { target: uid, targetName: name });
   await batch.commit();
   try {
     await callWorker('/admin/user', { action: 'delete', uid });
@@ -191,12 +241,17 @@ export async function deleteMember(uid) {
   }
 }
 
-export function setMemberPassword(uid, password) {
-  return callWorker('/admin/user', { action: 'setPassword', uid, password });
+export async function setMemberPassword(uid, code, name) {
+  const r = await callWorker('/admin/user', { action: 'setPassword', uid, password: code });
+  await audit('member.resetCode', { target: uid, targetName: name, detail: '비밀코드 초기화' });
+  return r;
 }
 
-export async function deleteCheckin(id) {
-  await deleteDoc(ref('checkins', id));
+export async function deleteCheckin(c) {
+  const batch = writeBatch(db);
+  batch.delete(ref('checkins', c.id));
+  addAudit(batch, 'checkin.delete', { target: c.uid, targetName: c.name, detail: '신고 기록 삭제' });
+  await batch.commit();
 }
 
 // ---------- 초기 설정 (첫 관리자) ----------
@@ -222,18 +277,18 @@ export async function registerFirstAdmin(uid, form) {
   });
   batch.set(ref('config', 'setup'), { by: uid, at: serverTimestamp() });
   await batch.commit();
-  await setDoc(ref('profiles', uid), { email: form.email, updatedAt: serverTimestamp() });
-}
-
-export async function setupFirstAdmin(form) {
-  const cred = await createOwnAccount(form.email, form.password);
-  await registerFirstAdmin(cred.user.uid, form);
+  // 관리자가 된 뒤에 쓰므로 로그인 아이디 기록도 남길 수 있다.
+  const profile = { updatedAt: serverTimestamp() };
+  if (form.loginId) profile.loginId = form.loginId;
+  if (form.email) profile.email = form.email;
+  await setDoc(ref('profiles', uid), profile);
 }
 
 // ---------- 집합장소 ----------
 
-export function saveMeetingPoint(rank, data) {
-  return setDoc(ref('meetingPoints', String(rank)), {
+export async function saveMeetingPoint(rank, data) {
+  const batch = writeBatch(db);
+  batch.set(ref('meetingPoints', String(rank)), {
     rank: Number(rank),
     name: data.name,
     address: data.address || '',
@@ -245,10 +300,15 @@ export function saveMeetingPoint(rank, data) {
     note: data.note || '',
     updatedAt: serverTimestamp(),
   });
+  addAudit(batch, 'meet.save', { target: String(rank), targetName: `${rank}순위 ${data.name}`, detail: data.overrideAt ? '도착 시각 직접 지정' : '' });
+  await batch.commit();
 }
 
-export function deleteMeetingPoint(rank) {
-  return deleteDoc(ref('meetingPoints', String(rank)));
+export async function deleteMeetingPoint(rank, name) {
+  const batch = writeBatch(db);
+  batch.delete(ref('meetingPoints', String(rank)));
+  addAudit(batch, 'meet.delete', { target: String(rank), targetName: `${rank}순위 ${name || ''}` });
+  await batch.commit();
 }
 
 export function addMeetingLog(me, rank, message, pos) {
@@ -273,20 +333,27 @@ export function deleteMeetingLog(id) {
 
 // ---------- 프로토콜 ----------
 
-export function saveProtocol(id, data) {
-  return setDoc(ref('protocols', id), {
+export async function saveProtocol(id, data) {
+  const batch = writeBatch(db);
+  batch.set(ref('protocols', id), {
     title: data.title,
     icon: data.icon || '📄',
     order: Number(data.order) || 99,
     summary: data.summary || '',
+    keyPoints: data.keyPoints || [],
     steps: data.steps,
     checklist: data.checklist,
     updatedAt: serverTimestamp(),
   });
+  addAudit(batch, 'protocol.save', { target: id, targetName: data.title });
+  await batch.commit();
 }
 
-export function deleteProtocol(id) {
-  return deleteDoc(ref('protocols', id));
+export async function deleteProtocol(id, title) {
+  const batch = writeBatch(db);
+  batch.delete(ref('protocols', id));
+  addAudit(batch, 'protocol.delete', { target: id, targetName: title });
+  await batch.commit();
 }
 
 /** 내장 기본 프로토콜을 서버에 올린다. 이미 있는 것은 건드리지 않는다. */
@@ -300,7 +367,10 @@ export async function seedProtocols() {
     batch.set(ref('protocols', id), { ...rest, updatedAt: serverTimestamp() });
     count++;
   }
-  if (count) await batch.commit();
+  if (count) {
+    addAudit(batch, 'protocol.seed', { detail: `기본 프로토콜 ${count}개 불러옴` });
+    await batch.commit();
+  }
   return count;
 }
 
@@ -314,6 +384,32 @@ export function setChecklistItem(uid, key, checked) {
 export async function getChecklist(uid) {
   const snap = await getDoc(ref('checklists', uid));
   return snap.exists() ? snap.data().done || {} : {};
+}
+
+// ---------- 가족 지정 연락처 ----------
+
+export const watchContacts = (cb, onError) => watchCollection('contacts', cb, onError);
+
+export async function saveContact(id, data) {
+  const batch = writeBatch(db);
+  const target = id ? ref('contacts', id) : doc(collection(db, 'contacts'));
+  batch.set(target, {
+    name: data.name,
+    phone: data.phone,
+    category: data.category || '',
+    note: data.note || '',
+    order: Number(data.order) || 0,
+    updatedAt: serverTimestamp(),
+  });
+  addAudit(batch, 'contact.save', { target: target.id, targetName: data.name });
+  await batch.commit();
+}
+
+export async function deleteContact(id, name) {
+  const batch = writeBatch(db);
+  batch.delete(ref('contacts', id));
+  addAudit(batch, 'contact.delete', { target: id, targetName: name });
+  await batch.commit();
 }
 
 // ---------- 알림 토큰 ----------

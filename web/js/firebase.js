@@ -6,6 +6,7 @@ import {
   createUserWithEmailAndPassword, updatePassword, EmailAuthProvider, reauthenticateWithCredential,
   sendPasswordResetEmail,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
+import { loginEmail } from './logic.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache,
   connectFirestoreEmulator,
@@ -43,18 +44,21 @@ export function watchAuth(cb) {
   return onAuthStateChanged(auth, cb);
 }
 
-export function login(email, password) {
-  return signInWithEmailAndPassword(auth, email.trim(), password);
+/** 아이디(또는 예전 방식의 이메일)와 비밀코드로 로그인 */
+export function login(loginId, code) {
+  return signInWithEmailAndPassword(auth, loginEmail(loginId, config.firebase.projectId), code);
 }
 
 export function logout() {
   return signOut(auth);
 }
 
+/** 예전 방식(실제 이메일) 계정만 재설정 메일을 받을 수 있다. 아이디 계정은 관리자가 초기화한다. */
 export function resetPasswordEmail(email) {
   return sendPasswordResetEmail(auth, email.trim());
 }
 
+/** 비밀코드 바꾸기 (현재 비밀코드로 본인 확인 후) */
 export async function changePassword(currentPassword, newPassword) {
   const user = auth.currentUser;
   await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, currentPassword));
@@ -62,20 +66,20 @@ export async function changePassword(currentPassword, newPassword) {
 }
 
 /** 첫 관리자가 스스로 계정을 만든다 (초기 설정 화면에서만 쓴다). */
-export function createOwnAccount(email, password) {
-  return createUserWithEmailAndPassword(auth, email.trim(), password);
+export function createOwnAccount(loginId, code) {
+  return createUserWithEmailAndPassword(auth, loginEmail(loginId, config.firebase.projectId), code);
 }
 
 /**
  * 관리자가 가족 계정을 만든다.
  * 같은 앱 인스턴스로 만들면 관리자가 새 계정으로 로그인돼 버리므로, 잠깐 쓰는 별도 인스턴스를 만든다.
  */
-export async function createAccountForOther(email, password) {
+export async function createAccountForOther(loginId, code) {
   const secondary = initializeApp(config.firebase, `create-${Date.now()}`);
   try {
     const secondaryAuth = initializeAuth(secondary, { persistence: inMemoryPersistence });
     if (useEmulators) connectAuthEmulator(secondaryAuth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    const cred = await createUserWithEmailAndPassword(secondaryAuth, email.trim(), password);
+    const cred = await createUserWithEmailAndPassword(secondaryAuth, loginEmail(loginId, config.firebase.projectId), code);
     const uid = cred.user.uid;
     await signOut(secondaryAuth);
     return uid;
@@ -99,14 +103,15 @@ export async function callWorker(path, body = {}) {
 }
 
 const AUTH_MESSAGES = {
-  'auth/invalid-credential': '이메일 또는 비밀번호가 맞지 않습니다.',
-  'auth/wrong-password': '비밀번호가 맞지 않습니다.',
-  'auth/user-not-found': '등록되지 않은 이메일입니다.',
-  'auth/invalid-email': '이메일 형식이 올바르지 않습니다.',
+  'auth/invalid-credential': '아이디 또는 비밀코드가 맞지 않습니다.',
+  'auth/wrong-password': '비밀코드가 맞지 않습니다.',
+  'auth/user-not-found': '등록되지 않은 아이디입니다.',
+  'auth/invalid-email': '아이디 형식이 올바르지 않습니다.',
+  'auth/missing-password': '비밀코드를 입력하세요.',
   'auth/too-many-requests': '시도가 너무 많습니다. 잠시 후 다시 시도하세요.',
   'auth/network-request-failed': '인터넷 연결을 확인하세요.',
-  'auth/email-already-in-use': '이미 사용 중인 이메일입니다.',
-  'auth/weak-password': '비밀번호는 6자 이상이어야 합니다.',
+  'auth/email-already-in-use': '이미 사용 중인 아이디입니다.',
+  'auth/weak-password': '비밀코드는 6자 이상이어야 합니다.',
   'auth/requires-recent-login': '보안을 위해 다시 로그인한 뒤 시도하세요.',
   'permission-denied': '권한이 없습니다.',
   unavailable: '서버에 연결할 수 없습니다. 연결되면 자동으로 다시 시도합니다.',

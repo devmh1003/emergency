@@ -25,14 +25,19 @@ const APP_FILES = [
   'js/push.js',
   'js/siren.js',
   'js/store.js',
+  'js/data/contacts.js',
   'js/data/protocols.js',
   'js/views/admin.js',
   'js/views/auth.js',
+  'js/views/contacts.js',
   'js/views/emergency.js',
   'js/views/family.js',
+  'js/views/guide.js',
   'js/views/home.js',
+  'js/views/location.js',
   'js/views/meet.js',
   'js/views/protocols.js',
+  'js/views/records.js',
   'js/views/settings.js',
 ];
 
@@ -44,6 +49,8 @@ const LIB_FILES = [
   `${FIREBASE}/firebase-messaging.js`,
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
+  'https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css',
+  'https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;600;700;800&display=swap',
 ];
 
 // ---------- 알림 (Firebase Cloud Messaging) ----------
@@ -164,7 +171,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(cacheFirst(request, TILE_CACHE, trimTiles));
     return;
   }
-  if (url.hostname === 'www.gstatic.com' || url.hostname === 'cdnjs.cloudflare.com') {
+  // 버전이 고정된 라이브러리와 글꼴 (글꼴 파일은 처음 쓸 때 저장된다)
+  if (['www.gstatic.com', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'].includes(url.hostname)) {
     event.respondWith(cacheFirst(request, LIB_CACHE));
     return;
   }

@@ -71,6 +71,18 @@ export class Firestore {
     return res.ok;
   }
 
+  /** 자동 id로 문서 하나를 만든다. 값: 문자열, 정수, Date(타임스탬프)만 쓴다. */
+  async create(collection, data) {
+    const fields = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (v instanceof Date) fields[k] = { timestampValue: v.toISOString() };
+      else if (Number.isInteger(v)) fields[k] = { integerValue: String(v) };
+      else fields[k] = { stringValue: String(v ?? '') };
+    }
+    const res = await this.request(collection, { method: 'POST', body: JSON.stringify({ fields }) });
+    return res.ok;
+  }
+
   async delete(path) {
     const res = await this.request(path, { method: 'DELETE' });
     return res.ok || res.status === 404;

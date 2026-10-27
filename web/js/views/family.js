@@ -1,5 +1,6 @@
-// 가족 상태 목록, 전체 위치 지도, 가족 상세(관리자)
-import { h, toast, busy, card, pageHeader, empty } from '../dom.js';
+// 가족 현황, 마지막 위치 지도, 가족 상세
+// 관리자는 가족 전체를, 일반 가족은 본인과 관리자가 지정한 최대 3명만 본다 (서버 규칙이 강제한다).
+import { h, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   getProfile, getChecklist, watchCheckins, updateMember, deleteMember, setMemberPassword, deleteCheckin,
@@ -7,7 +8,7 @@ import {
 import { mapView } from '../map.js';
 import {
   memberStatus, statusRank, formatAgo, formatDateTime, cleanPhone, hasLocation, locationUrl,
-  CHECKIN_LABEL, ageFromBirth, checklistProgress,
+  CHECKIN_LABEL, ageFromBirth, checklistProgress, secretCodeProblem,
 } from '../logic.js';
 
 // 비활성화된 가족은 관리자에게만 보인다 (다시 활성화할 수 있도록).
@@ -22,37 +23,49 @@ export function statusSummary(state) {
   if (!state.emergency?.active) return null;
   const counts = { safe: 0, help: 0, unknown: 0 };
   for (const { s } of sortedByStatus(state)) counts[s.key] = (counts[s.key] || 0) + 1;
-  return h('div', { class: 'summary' },
-    h('span', { class: 'chip status-safe' }, `무사 ${counts.safe}`),
-    h('span', { class: 'chip status-help' }, `도움 필요 ${counts.help}`),
-    h('span', { class: 'chip status-unknown' }, `확인 안 됨 ${counts.unknown}`));
+  return h('div', { class: 'row', style: { marginBottom: '0.75rem' } },
+    h('span', { class: 'tag tag-big status-safe' }, `무사 ${counts.safe}`),
+    h('span', { class: 'tag tag-big status-help' }, `도움 필요 ${counts.help}`),
+    h('span', { class: 'tag tag-big status-unknown' }, `확인 안 됨 ${counts.unknown}`));
 }
 
-/** 가족 목록. 이름·상태·마지막 신고·전화·위치 */
+function canOpen(state, m) {
+  return state.isAdmin || m.id === state.me.id || state.members.some((x) => x.id === m.id);
+}
+
+function contactButtons(m) {
+  const phone = cleanPhone(m.phone);
+  const last = m.last;
+  return h('div', { class: 'row-actions' },
+    phone ? h('a', { class: 'btn btn-sm', href: `tel:${phone}` }, '📞 전화') : null,
+    phone ? h('a', { class: 'btn btn-sm btn-outline', href: `sms:${phone}` }, '✉️ 문자') : null,
+    hasLocation(last) ? h('a', { class: 'btn btn-sm btn-outline', href: locationUrl(last), target: '_blank', rel: 'noopener' }, '🗺 마지막 위치') : null);
+}
+
+function nameCell(state, m) {
+  const href = m.id === state.me.id && !state.isAdmin ? '#/records' : `#/member/${encodeURIComponent(m.id)}`;
+  return h('span', null,
+    canOpen(state, m) ? h('a', { href, class: 'item-title' }, m.name) : h('span', { class: 'item-title' }, m.name),
+    m.role === 'admin' ? h('span', { class: 'tag tag-light', style: { marginLeft: '0.375rem' } }, '관리자') : null,
+    m.id === state.me.id ? h('span', { class: 'tag tag-me', style: { marginLeft: '0.375rem' } }, '나') : null);
+}
+
+/** 가족 목록. compact: 홈 화면용 짧은 목록 */
 export function familyStatusList(state, { compact = false } = {}) {
   const rows = sortedByStatus(state, state.isAdmin && !compact);
-  if (!rows.length) return empty('등록된 가족이 없습니다.');
-  return h('ul', { class: 'list' }, rows.map(({ m, s }) => {
-    const last = m.last;
-    const canOpen = state.isAdmin || m.id === state.me.id;
-    const phone = cleanPhone(m.phone);
-    return h('li', { class: 'list-item member-row' },
-      h('div', { class: 'member-main' },
-        h('div', null,
-          canOpen
-            ? h('a', { href: m.id === state.me.id && !state.isAdmin ? '#/records' : `#/member/${encodeURIComponent(m.id)}`, class: 'member-name' }, m.name)
-            : h('span', { class: 'member-name' }, m.name),
-          m.role === 'admin' ? h('span', { class: 'badge' }, '관리자') : null,
-          m.id === state.me.id ? h('span', { class: 'badge badge-me' }, '나') : null),
-        h('span', { class: `chip status-${s.key}` }, s.label)),
-      h('div', { class: 'muted small' },
-        last ? `${CHECKIN_LABEL[last.type] || ''} · ${formatAgo(last.clientAt || last.at)}` : '신고 기록 없음',
-        !compact && last?.note ? ` · "${last.note}"` : ''),
-      h('div', { class: 'row-actions' },
-        phone ? h('a', { class: 'btn btn-sm', href: `tel:${phone}` }, '📞 전화') : null,
-        phone ? h('a', { class: 'btn btn-sm', href: `sms:${phone}` }, '✉️ 문자') : null,
-        hasLocation(last) ? h('a', { class: 'btn btn-sm', href: locationUrl(last), target: '_blank', rel: 'noopener' }, '🗺️ 마지막 위치') : null));
-  }));
+  if (!rows.length) return empty('보이는 가족이 없습니다.');
+  if (compact) {
+    return h('ul', { class: 'list' }, rows.map(({ m, s }) => h('li', { class: 'list-item' },
+      h('div', { class: 'item-main' }, nameCell(state, m), h('span', { class: `tag status-${s.key}` }, s.label)),
+      h('div', { class: 'small muted' }, m.last ? `${CHECKIN_LABEL[m.last.type] || ''} · ${formatAgo(m.last.clientAt || m.last.at)}` : '신고 기록 없음'))));
+  }
+  return table(['이름', '상태', '마지막 신고', '메모', '연락'], rows.map(({ m, s }) => [
+    nameCell(state, m),
+    h('span', { class: `tag status-${s.key}` }, s.label),
+    m.last ? h('span', null, `${CHECKIN_LABEL[m.last.type] || ''} · ${formatAgo(m.last.clientAt || m.last.at)}`) : h('span', { class: 'muted' }, '기록 없음'),
+    m.last?.note || '-',
+    contactButtons(m),
+  ]));
 }
 
 function latestPoints(state) {
@@ -69,7 +82,7 @@ function latestPoints(state) {
 }
 
 export function familyView({ state, live, onChange, navigate }) {
-  const map = mapView({ points: latestPoints(state), height: 280 });
+  const map = mapView({ points: latestPoints(state), height: 300 });
   let lastSig = '';
   onChange(() => {
     // 위치가 실제로 바뀌었을 때만 지도를 다시 맞춘다 (보고 있던 확대 상태 유지).
@@ -82,158 +95,173 @@ export function familyView({ state, live, onChange, navigate }) {
   });
 
   return h('div', { class: 'page' },
-    pageHeader('가족',
-      state.isAdmin ? h('button', { class: 'btn btn-primary btn-sm', onClick: () => navigate('/admin/member/new') }, '+ 가족 추가') : null),
-    card(h('h2', null, '마지막 위치'), map.el,
+    pageHeader('가족 현황',
+      { lead: state.isAdmin ? '가족 전체의 생존신고 상태와 마지막 위치입니다.' : '나와, 관리자가 지정한 가족(최대 3명)의 상태입니다.' },
+      state.isAdmin ? h('button', { class: 'btn', onClick: () => navigate('/admin/member/new') }, '+ 가족 추가') : null),
+    state.isAdmin ? null : alertBox('info', null, h('p', null, '개인정보 보호를 위해 관리자가 지정한 가족만 보입니다. 다른 가족의 정보가 필요하면 관리자에게 요청하세요.')),
+    panel('상태', null, live(() => statusSummary(state)), live(() => familyStatusList(state))),
+    panel('마지막 위치', null, map.el,
       h('p', { class: 'muted small' }, '가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.')),
-    card(live(() => statusSummary(state)), live(() => familyStatusList(state))),
     state.isAdmin
-      ? card(h('h2', null, '관리자 메뉴'), h('div', { class: 'stack' },
-        h('a', { class: 'btn', href: '#/admin/meet' }, '📍 집합장소 설정'),
-        h('a', { class: 'btn', href: '#/admin/protocols' }, '📘 대처법·체크리스트 관리'),
-        h('a', { class: 'btn', href: '#/emergency' }, '🚨 비상선언·해제')))
+      ? panel('관리자 메뉴', null, h('div', { class: 'tiles' },
+        [['#/admin/directory', '🗃', '가족 정보 한눈에', '개인정보·연결 상태 표'],
+          ['#/admin/logs', '📋', '관리자 기록', '알림·신고·관리 작업'],
+          ['#/admin/meet', '📍', '집합장소 설정', '1~10순위'],
+          ['#/admin/protocols', '📘', '대처법 관리', '내용·체크리스트 편집'],
+          ['#/contacts', '☎️', '연락처 관리', '가족 지정 연락처'],
+          ['#/emergency', '🚨', '비상선언·해제', '알림 발송']].map(([href, icon, title, desc]) => h('a', { class: 'tile tile-admin', href },
+          h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))))
       : null);
 }
 
 // ---------- 가족 상세 ----------
 
 function infoRow(label, value) {
-  return h('div', { class: 'info-row' }, h('span', { class: 'muted' }, label), h('span', null, value || '-'));
+  return h('div', { class: 'info-row' }, h('span', null, label), h('span', null, value || '-'));
 }
 
 export function memberDetailView({ state, params, live, navigate }) {
   const uid = params.uid;
-  if (!state.isAdmin && uid !== state.me.id) {
-    setTimeout(() => navigate('/'), 0);
-    return h('div');
-  }
   const member = () => state.members.find((m) => m.id === uid);
-  if (!member()) return h('div', { class: 'page' }, pageHeader('가족'), empty('삭제됐거나 없는 가족입니다.'));
+  if (!member() || !canOpen(state, member())) {
+    return h('div', { class: 'page' }, pageHeader('가족', { crumbs: [{ label: '가족 현황', href: '#/family' }] }), empty('볼 수 없는 가족입니다.'));
+  }
+  const fullAccess = state.isAdmin || uid === state.me.id;
 
-  // 민감 정보 (본인·관리자만 읽을 수 있다)
+  // 민감 정보 (본인·관리자·지정된 가족만 읽을 수 있다)
   const profileBox = h('div', null, h('p', { class: 'muted' }, '불러오는 중…'));
   const progressBox = h('div');
   getProfile(uid).then((p) => {
     const age = ageFromBirth(p.birthDate);
     profileBox.replaceChildren(
+      fullAccess && p.loginId ? infoRow('로그인 아이디', p.loginId) : null,
       infoRow('성별', p.gender),
       infoRow('나이', age != null ? `${age}세 (${p.birthDate})` : p.birthDate),
       infoRow('혈액형', p.bloodType),
-      infoRow('이메일', p.email),
-      infoRow('집주소', p.address),
+      infoRow('의료 메모', p.medical),
       infoRow('비상연락처', p.emergencyContact),
-      infoRow('의료 메모', p.medical));
+      infoRow('집주소', p.address),
+      infoRow('이메일', p.email));
   }).catch((err) => profileBox.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
-  getChecklist(uid).then((done) => {
-    const r = checklistProgress(state.protocols, done);
-    progressBox.replaceChildren(
-      h('div', { class: 'progress' }, h('div', { class: 'progress-bar', style: { width: `${r.percent}%` } })),
-      h('p', { class: 'small muted' }, `대비 체크리스트 ${r.checked}/${r.total} (${r.percent}%)`));
-  }).catch(() => {});
 
-  // 위치 기록
-  const trail = mapView({ height: 260, line: true });
-  const historyBox = h('div', null, h('p', { class: 'muted' }, '불러오는 중…'));
-  const unsub = watchCheckins(uid, (list) => {
-    trail.setPoints([...list].reverse().filter(hasLocation).map((c, i, arr) => ({
-      lat: c.lat,
-      lng: c.lng,
-      label: i === arr.length - 1 ? '최근' : String(i + 1),
-      color: c.type === 'help' ? 'help' : i === arr.length - 1 ? 'me' : 'default',
-      popup: `${CHECKIN_LABEL[c.type]} · ${formatDateTime(c.clientAt)}${c.note ? ` · ${c.note}` : ''}`,
-    })));
-    historyBox.replaceChildren(list.length ? h('ul', { class: 'list' }, list.map((c) => h('li', { class: 'list-item' },
-      h('div', { class: 'member-main' },
-        h('strong', null, CHECKIN_LABEL[c.type] || c.type),
-        h('span', { class: 'muted small' }, formatDateTime(c.clientAt))),
-      c.note ? h('div', { class: 'small' }, c.note) : null,
-      h('div', { class: 'row-actions' },
-        hasLocation(c) ? h('a', { class: 'btn btn-sm', href: locationUrl(c), target: '_blank', rel: 'noopener' }, `🗺️ 위치 (±${c.accuracy ?? '?'}m)`) : h('span', { class: 'muted small' }, '위치 없음'),
+  let historySection = null;
+  if (fullAccess) {
+    getChecklist(uid).then((done) => {
+      const r = checklistProgress(state.protocols, done);
+      progressBox.replaceChildren(
+        h('h3', null, '대비 체크리스트'),
+        h('div', { class: 'progress' }, h('div', { class: 'progress-bar', style: { width: `${r.percent}%` } })),
+        h('p', { class: 'small muted' }, `${r.checked}/${r.total} (${r.percent}%)`));
+    }).catch(() => {});
+
+    // 위치 기록 (본인·관리자만)
+    const trail = mapView({ height: 280, line: true });
+    const historyBox = h('div', null, h('p', { class: 'muted' }, '불러오는 중…'));
+    const unsub = watchCheckins(uid, (list) => {
+      trail.setPoints([...list].reverse().filter(hasLocation).map((c, i, arr) => ({
+        lat: c.lat,
+        lng: c.lng,
+        label: i === arr.length - 1 ? '최근' : String(i + 1),
+        color: c.type === 'help' ? 'help' : i === arr.length - 1 ? 'me' : 'default',
+        popup: `${CHECKIN_LABEL[c.type]} · ${formatDateTime(c.clientAt)}${c.note ? ` · ${c.note}` : ''}`,
+      })));
+      historyBox.replaceChildren(list.length ? table(['시각', '종류', '메모', '위치', ''], list.map((c) => [
+        h('span', { class: 'num' }, formatDateTime(c.clientAt)),
+        h('span', { class: `tag kind-${c.type}` }, CHECKIN_LABEL[c.type] || c.type),
+        c.note || '-',
+        hasLocation(c) ? h('a', { href: locationUrl(c), target: '_blank', rel: 'noopener' }, `지도 (±${c.accuracy ?? '?'}m)`) : h('span', { class: 'muted' }, '위치 없음'),
         state.isAdmin ? h('button', {
-          class: 'btn btn-sm btn-ghost',
+          class: 'btn btn-sm btn-outline-secondary',
           onClick: async () => {
-            if (!confirm('이 기록을 지울까요?')) return;
-            try { await deleteCheckin(c.id); } catch (err) { toast(errorMessage(err), 'error'); }
+            if (!confirm('이 기록을 지울까요? (관리 기록에 남습니다)')) return;
+            try { await deleteCheckin(c); } catch (err) { toast(errorMessage(err), 'error'); }
           },
-        }, '삭제') : null))))
-      : empty('신고 기록이 없습니다.'));
-  }, (err) => historyBox.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))), 200);
-  window.addEventListener('hashchange', unsub, { once: true });
+        }, '삭제') : '',
+      ])) : empty('신고 기록이 없습니다.'));
+    }, (err) => historyBox.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))), 200);
+    window.addEventListener('hashchange', unsub, { once: true });
+    historySection = [panel('이동 경로', null, trail.el), panel('신고 기록', null, historyBox)];
+  }
 
   return h('div', { class: 'page' },
     live(() => {
       const m = member();
-      if (!m) return pageHeader('삭제된 가족');
-      return pageHeader(m.name,
-        state.isAdmin ? h('button', { class: 'btn btn-sm', onClick: () => navigate(`/admin/member/${encodeURIComponent(uid)}`) }, '수정') : null);
+      if (!m) return pageHeader('삭제된 가족', { crumbs: [{ label: '가족 현황', href: '#/family' }] });
+      return pageHeader(m.name, { crumbs: [{ label: '가족 현황', href: '#/family' }] },
+        state.isAdmin ? h('button', { class: 'btn btn-outline', onClick: () => navigate(`/admin/member/${encodeURIComponent(uid)}`) }, '정보 수정') : null);
     }),
-    live(() => {
-      const m = member();
-      if (!m) return null;
-      const s = memberStatus(m, state.emergency);
-      return card(
-        h('div', { class: 'member-main' }, h('span', { class: `chip status-${s.key}` }, s.label),
-          h('span', { class: 'muted small' }, m.last ? formatAgo(m.last.clientAt || m.last.at) : '')),
-        infoRow('전화번호', m.phone),
-        infoRow('권한', m.role === 'admin' ? '관리자' : '가족'),
-        infoRow('비상선언권', m.role === 'admin' ? '제한 없음' : `${m.declareCredits}회`));
-    }),
-    card(h('h2', null, '개인정보'), profileBox, progressBox),
-    card(h('h2', null, '이동 경로'), trail.el),
-    card(h('h2', null, '신고 기록'), historyBox),
+    h('div', { class: 'grid grid-2' },
+      live(() => {
+        const m = member();
+        if (!m) return null;
+        const s = memberStatus(m, state.emergency);
+        return panel('현재 상태', null,
+          h('div', { class: 'item-main', style: { marginBottom: '0.5rem' } },
+            h('span', { class: `tag tag-big status-${s.key}` }, s.label),
+            h('span', { class: 'muted small' }, m.last ? formatAgo(m.last.clientAt || m.last.at) : '')),
+          infoRow('전화번호', m.phone),
+          infoRow('권한', m.role === 'admin' ? '관리자' : '가족'),
+          state.isAdmin ? infoRow('비상선언권', m.role === 'admin' ? '제한 없음' : `${m.declareCredits}회`) : null,
+          state.isAdmin ? infoRow('볼 수 있는 가족', (m.links || []).map((id) => state.members.find((x) => x.id === id)?.name || '(삭제됨)').join(', ') || '지정 안 됨') : null,
+          contactButtons(m));
+      }),
+      panel('개인정보', null, profileBox, progressBox)),
+    historySection,
     state.isAdmin ? live(() => (member() ? adminActions(state, member(), navigate) : null)) : null);
 }
 
 function adminActions(state, m, navigate) {
   const isSelf = m.id === state.me.id;
   const admins = state.members.filter((x) => x.role === 'admin' && x.active);
-  return card(h('h2', null, '관리'), h('div', { class: 'stack' },
+  return panel('관리', null, h('div', { class: 'row' },
     m.role !== 'admin' ? h('button', {
-      class: 'btn',
+      class: 'btn btn-outline',
       disabled: m.declareCredits >= 1,
       onClick: (e) => busy(e.currentTarget, async () => {
         try {
-          await updateMember(m.id, { declareCredits: 1 });
+          await updateMember(m.id, { declareCredits: 1 }, m.name);
           toast('비상선언권 1회를 다시 줬습니다.');
         } catch (err) { toast(errorMessage(err), 'error'); }
       }),
     }, m.declareCredits >= 1 ? '비상선언권 있음' : '비상선언권 다시 주기') : null,
     h('button', {
-      class: 'btn',
+      class: 'btn btn-outline',
       onClick: (e) => {
-        const pw = prompt(`${m.name}님의 새 비밀번호 (8자 이상)`);
-        if (!pw) return;
-        if (pw.length < 8) { toast('8자 이상이어야 합니다.', 'error'); return; }
+        const code = prompt(`${m.name}님의 새 비밀코드 (6자 이상)`);
+        if (!code) return;
+        const problem = secretCodeProblem(code);
+        if (problem) { toast(problem, 'error'); return; }
         busy(e.currentTarget, async () => {
           try {
-            await setMemberPassword(m.id, pw);
-            toast('비밀번호를 바꿨습니다. 본인에게 알려 주세요.');
+            await setMemberPassword(m.id, code, m.name);
+            toast('비밀코드를 바꿨습니다. 본인에게 알려 주세요.');
           } catch (err) { toast(errorMessage(err), 'error'); }
         });
       },
-    }, '🔑 비밀번호 초기화'),
+    }, '🔑 비밀코드 초기화'),
     !isSelf ? h('button', {
-      class: 'btn',
+      class: 'btn btn-outline',
       onClick: (e) => busy(e.currentTarget, async () => {
         if (m.role === 'admin' && m.active && admins.length <= 1) { toast('마지막 관리자는 비활성화할 수 없습니다.', 'error'); return; }
         try {
-          await updateMember(m.id, { active: !m.active });
-          toast(m.active ? '비활성화했습니다. 이제 아무 정보도 볼 수 없습니다.' : '다시 활성화했습니다.');
+          await updateMember(m.id, { active: !m.active }, m.name);
+          toast(m.active ? '접근을 차단했습니다. 이제 아무 정보도 볼 수 없습니다.' : '다시 활성화했습니다.');
         } catch (err) { toast(errorMessage(err), 'error'); }
       }),
-    }, m.active ? '⏸ 접근 차단 (비활성화)' : '▶ 다시 활성화') : null,
+    }, m.active ? '⏸ 접근 차단' : '▶ 다시 활성화') : null,
     !isSelf ? h('button', {
-      class: 'btn btn-danger',
+      class: 'btn btn-secondary',
       onClick: (e) => {
         if (m.role === 'admin' && admins.length <= 1) { toast('마지막 관리자는 삭제할 수 없습니다.', 'error'); return; }
         if (!confirm(`${m.name}님을 삭제할까요? 개인정보와 로그인 계정이 지워집니다. (신고 기록은 남습니다)`)) return;
         busy(e.currentTarget, async () => {
           try {
-            const r = await deleteMember(m.id);
+            const r = await deleteMember(m.id, m.name);
             toast(r.accountDeleted ? '삭제했습니다.' : `삭제했습니다. 로그인 계정은 Firebase 콘솔에서 지워 주세요 (${r.error}).`, r.accountDeleted ? 'info' : 'warn');
             navigate('/family');
           } catch (err) { toast(errorMessage(err), 'error'); }
         });
       },
-    }, '🗑 가족 삭제') : h('p', { class: 'muted small' }, '본인 계정은 삭제·비활성화할 수 없습니다.')));
+    }, '🗑 가족 삭제') : null),
+    isSelf ? h('p', { class: 'muted small', style: { marginTop: '0.75rem' } }, '본인 계정은 삭제·차단할 수 없습니다.') : null);
 }

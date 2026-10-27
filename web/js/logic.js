@@ -258,14 +258,231 @@ export function parseChecklist(text, previous = []) {
   return out.slice(0, 80);
 }
 
-export const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', '모름'];
+// ---------- 오프라인 길찾기 (거리·방향) ----------
+// 지도가 안 뜰 때도 GPS 좌표만으로 집합장소까지의 거리와 방향을 알려준다.
+
+const EARTH_RADIUS_M = 6371_000;
+const rad = (d) => (d * Math.PI) / 180;
+
+/** 두 좌표 사이 거리(미터) */
+export function distanceMeters(a, b) {
+  const dLat = rad(b.lat - a.lat);
+  const dLng = rad(b.lng - a.lng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/** a에서 b를 바라보는 방위각(0=북, 90=동) */
+export function bearingDegrees(a, b) {
+  const y = Math.sin(rad(b.lng - a.lng)) * Math.cos(rad(b.lat));
+  const x = Math.cos(rad(a.lat)) * Math.sin(rad(b.lat)) - Math.sin(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.cos(rad(b.lng - a.lng));
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+const DIRECTIONS = ['북', '북동', '동', '남동', '남', '남서', '서', '북서'];
+const ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+
+export function compassLabel(deg) {
+  const i = Math.round(deg / 45) % 8;
+  return { label: `${DIRECTIONS[i]}쪽`, arrow: ARROWS[i] };
+}
+
+export function formatDistance(m) {
+  if (m < 1000) return `${Math.round(m / 10) * 10}m`;
+  return `${(m / 1000).toFixed(m < 10_000 ? 1 : 0)}km`;
+}
+
+/** 걸어서 걸리는 시간 (시속 4km 기준) */
+export function walkingMinutes(m) {
+  return Math.max(1, Math.round(m / (4000 / 60)));
+}
+
+/** 현재 위치 → 목적지 안내 문구 */
+export function routeHint(from, to) {
+  if (!hasLocation(from) || !hasLocation(to)) return null;
+  const m = distanceMeters(from, to);
+  const dir = compassLabel(bearingDegrees(from, to));
+  return {
+    meters: m,
+    text: `${formatDistance(m)} · ${dir.label}`,
+    arrow: dir.arrow,
+    walk: `걸어서 약 ${formatDuration(walkingMinutes(m))}`,
+  };
+}
+
+function formatDuration(min) {
+  if (min < 60) return `${min}분`;
+  const h = Math.floor(min / 60);
+  return `${h}시간${min % 60 ? ` ${min % 60}분` : ''}`;
+}
+
+/** 위도·경도를 도·분 형식으로 (종이에 적거나 무전으로 불러줄 때) */
+export function formatDms(lat, lng) {
+  const part = (v, pos, neg) => {
+    const a = Math.abs(v);
+    const d = Math.floor(a);
+    const m = ((a - d) * 60).toFixed(3);
+    return `${v >= 0 ? pos : neg} ${d}° ${m}'`;
+  };
+  return `${part(lat, 'N', 'S')}, ${part(lng, 'E', 'W')}`;
+}
+
+// ---------- CSV (관리자 기록 내려받기) ----------
+
+/** 엑셀에서 수식으로 실행되지 않도록 =, +, -, @ 로 시작하는 칸은 앞에 '를 붙인다. */
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/** 엑셀에서 한글이 깨지지 않도록 BOM을 붙인다. */
+export function toCsv(headers, rows) {
+  return `﻿${[headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n')}`;
+}
+
+// ---------- 관리자 기록 화면: 여러 기록을 하나의 시간순 목록으로 ----------
+
+export const LOG_KINDS = {
+  emergency: '비상',
+  safe: '생존신고',
+  help: '도움 요청',
+  checkpoint: '체크포인트',
+  meet: '집합 기록',
+  notify: '알림 발송',
+  admin: '관리 작업',
+};
+
+const AUDIT_LABELS = {
+  'member.create': '가족 추가',
+  'member.update': '가족 정보 수정',
+  'member.delete': '가족 삭제',
+  'member.activate': '접근 허용',
+  'member.deactivate': '접근 차단',
+  'member.credit': '비상선언권 다시 줌',
+  'member.resetCode': '비밀코드 초기화',
+  'checkin.delete': '신고 기록 삭제',
+  'meet.save': '집합장소 저장',
+  'meet.delete': '집합장소 삭제',
+  'protocol.save': '대처법 저장',
+  'protocol.delete': '대처법 삭제',
+  'protocol.seed': '기본 대처법 불러옴',
+  'contact.save': '연락처 저장',
+  'contact.delete': '연락처 삭제',
+  'notify.emergency': '비상 알림 발송',
+  'notify.end': '해제 알림 발송',
+  'notify.test': '테스트 알림 발송',
+};
+
+export function auditLabel(action) {
+  return AUDIT_LABELS[action] || action;
+}
+
+/**
+ * 비상 기록, 생존신고, 집합 기록, 관리 기록을 같은 모양으로 바꿔 시간 역순으로 합친다.
+ * @returns {Array<{id, kind, at: Date, who, whoId, title, detail, lat, lng}>}
+ */
+export function buildTimeline({ emergencyLog = [], checkins = [], meetingLogs = [], auditLog = [] }) {
+  const out = [];
+  for (const e of emergencyLog) {
+    out.push({
+      id: `e-${e.id}`, kind: 'emergency', at: toDate(e.at), who: e.byName, whoId: e.by,
+      title: e.action === 'declare' ? `비상 선언: ${emergencyLabel(e.type)}` : '비상 해제',
+      detail: e.message || '',
+    });
+  }
+  for (const c of checkins) {
+    out.push({
+      id: `c-${c.id}`, kind: c.type, at: toDate(c.clientAt) || toDate(c.at), who: c.name, whoId: c.uid,
+      title: CHECKIN_LABEL[c.type] || c.type, detail: c.note || '', lat: c.lat, lng: c.lng, accuracy: c.accuracy,
+    });
+  }
+  for (const m of meetingLogs) {
+    out.push({
+      id: `m-${m.id}`, kind: 'meet', at: toDate(m.clientAt) || toDate(m.at), who: m.name, whoId: m.uid,
+      title: `${m.rank}순위 집합장소 기록`, detail: m.message || '', lat: m.lat, lng: m.lng,
+    });
+  }
+  for (const a of auditLog) {
+    const isNotify = String(a.action).startsWith('notify.');
+    out.push({
+      id: `a-${a.id}`, kind: isNotify ? 'notify' : 'admin', at: toDate(a.at), who: a.byName, whoId: a.by,
+      title: `${auditLabel(a.action)}${a.targetName ? ` — ${a.targetName}` : ''}`, detail: a.detail || '',
+    });
+  }
+  return out.filter((x) => x.at).sort((a, b) => b.at - a.at);
+}
+
+/** 기록 목록 거르기 */
+export function filterTimeline(items, { kind = 'all', who = 'all', days = 0, q = '' } = {}, now = new Date()) {
+  const since = days ? now.getTime() - days * 86_400_000 : 0;
+  const text = q.trim().toLowerCase();
+  return items.filter((x) => (kind === 'all' || x.kind === kind)
+    && (who === 'all' || x.whoId === who)
+    && x.at.getTime() >= since
+    && (!text || `${x.title} ${x.detail} ${x.who || ''}`.toLowerCase().includes(text)));
+}
+
+/** 날짜 제목 ("2026년 10월 27일 화요일") */
+export function formatDayHeading(d) {
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일 ${WEEK[d.getDay()]}요일`;
+}
+
+export function formatTime(v) {
+  const d = toDate(v);
+  return d ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : '-';
+}
+
+// ---------- 아이디 + 비밀코드 로그인 ----------
+// Firebase 로그인은 이메일 형식이 필요하므로, 아이디를 이 프로젝트 전용 주소로 바꿔 쓴다.
+// (projectId.firebaseapp.com 은 이 프로젝트의 도메인이고, 이 주소로는 메일을 보내지 않는다)
+
+export const LOGIN_ID_RULE = '영문 소문자·숫자로 시작하는 3~20자 (영문 소문자, 숫자, . _ - 사용 가능)';
+
+export function normalizeLoginId(input) {
+  return String(input || '').trim().toLowerCase();
+}
+
+export function isValidLoginId(id) {
+  return /^[a-z0-9][a-z0-9._-]{2,19}$/.test(id);
+}
+
+/** 로그인 칸에 넣은 값을 Firebase 로그인 주소로. @가 있으면 예전 방식(이메일) 그대로. */
+export function loginEmail(input, projectId) {
+  const s = normalizeLoginId(input);
+  return s.includes('@') ? s : `${s}@${projectId}.firebaseapp.com`;
+}
+
+/** 로그인 주소에서 아이디를 꺼낸다. 이메일 계정이면 이메일을 그대로 돌려준다. */
+export function loginIdFromEmail(email, projectId) {
+  const suffix = `@${projectId}.firebaseapp.com`;
+  if (!email) return '';
+  return email.endsWith(suffix) ? email.slice(0, -suffix.length) : email;
+}
+
+/** 비밀코드 검사. 문제가 없으면 null, 있으면 안내 문구. */
+export function secretCodeProblem(code) {
+  const s = String(code || '');
+  if (s.length < 6) return '비밀코드는 6자 이상이어야 합니다.';
+  if (s.length > 64) return '비밀코드는 64자 이하여야 합니다.';
+  if (/^(\d)\1+$/.test(s) || ['123456', '1234567', '12345678', '654321', '000000', 'password', 'qwerty'].includes(s)) {
+    return '너무 쉬운 비밀코드입니다. 다른 조합을 쓰세요.';
+  }
+  return null;
+}
+
+export const BLOOD_TYPES =['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', '모름'];
 export const GENDERS = ['남', '여', '기타'];
 export const EMERGENCY_TYPES = [
   { id: 'war', label: '전쟁·공습' },
   { id: 'cbrn', label: '화생방·핵' },
   { id: 'earthquake', label: '지진' },
   { id: 'flood', label: '태풍·홍수' },
+  { id: 'tsunami', label: '지진해일' },
+  { id: 'landslide', label: '산사태' },
   { id: 'fire', label: '화재·산불' },
+  { id: 'heat', label: '폭염' },
+  { id: 'cold', label: '한파·폭설' },
   { id: 'pandemic', label: '감염병' },
   { id: 'blackout', label: '정전·통신두절' },
   { id: 'other', label: '기타' },

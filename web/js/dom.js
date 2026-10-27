@@ -100,8 +100,61 @@ export function card(...children) {
   return h('section', { class: 'card' }, ...children);
 }
 
-export function pageHeader(title, ...actions) {
-  return h('header', { class: 'page-header' }, h('h1', null, title), actions.length ? h('div', { class: 'actions' }, actions) : null);
+/** 제목 띠가 있는 카드. link: { href, label } */
+export function panel(title, link, ...children) {
+  return h('section', { class: 'card' },
+    h('div', { class: 'card-header' }, h('h2', null, title), link ? h('a', { href: link.href }, link.label) : null),
+    ...children);
+}
+
+/**
+ * 페이지 제목. 두 번째 인자로 { lead, crumbs: [{label, href}] } 를 줄 수 있고, 나머지는 오른쪽 버튼들.
+ * 위에 "홈 › … › 제목" 경로 표시가 붙는다.
+ */
+export function pageHeader(title, ...rest) {
+  let opts = {};
+  if (rest[0] && !(rest[0] instanceof Node) && typeof rest[0] === 'object') opts = rest.shift();
+  const actions = rest.filter(Boolean);
+  const crumbs = [{ label: '홈', href: '#/' }, ...(opts.crumbs || [])];
+  return h('div', null,
+    h('nav', { class: 'breadcrumb', 'aria-label': '현재 위치' },
+      crumbs.map((c) => [h('a', { href: c.href }, c.label), h('span', { 'aria-hidden': 'true' }, '›')]),
+      h('span', { 'aria-current': 'page' }, typeof title === 'string' ? title : '')),
+    h('header', { class: 'page-header' },
+      h('div', null, h('h1', null, title), opts.lead ? h('p', { class: 'lead' }, opts.lead) : null),
+      actions.length ? h('div', { class: 'actions' }, actions) : null));
+}
+
+/** USWDS 알림 상자. kind: info | success | warning | error | emergency */
+export function alertBox(kind, heading, ...children) {
+  return h('div', { class: `alert alert-${kind}`, role: kind === 'error' || kind === 'emergency' ? 'alert' : 'status' },
+    heading ? h('h2', { class: 'alert-heading' }, heading) : null,
+    ...children);
+}
+
+/**
+ * 표. 좁은 화면에서는 카드처럼 쌓인다.
+ * @param {string[]} headers
+ * @param {Array<Array<Node|string>>} rows
+ */
+export function table(headers, rows, caption) {
+  return h('div', { class: 'table-wrap' },
+    h('table', { class: 'table table-stack' },
+      caption ? h('caption', null, caption) : null,
+      h('thead', null, h('tr', null, headers.map((t) => h('th', { scope: 'col' }, t)))),
+      h('tbody', null, rows.map((r) => h('tr', null, r.map((cell, i) => h('td', { 'data-label': headers[i] }, cell)))))));
+}
+
+/** 파일 내려받기 (CSV 등). 사용자가 버튼을 눌렀을 때만 호출한다. */
+export function downloadText(filename, text, type = 'text/csv;charset=utf-8') {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = h('a', { href: url, download: filename });
+  a.href = url;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function empty(text) {

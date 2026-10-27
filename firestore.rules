@@ -35,6 +35,11 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    // 관리자가 이 사람에게 보여주도록 지정한 가족인가 (최대 3명)
+    function isLinked(uid) {
+      return isMember() && uid in me().get('links', []);
+    }
+
     function str(v, max) {
       return v is string && v.size() <= max;
     }
@@ -92,8 +97,9 @@ service cloud.firestore {
     // ---------- 가족 (공개 범위: 가족 전체) ----------
 
     function validMember(d) {
-      return d.keys().hasOnly(['name', 'phone', 'role', 'active', 'declareCredits', 'last', 'order', 'createdAt', 'updatedAt'])
+      return d.keys().hasOnly(['name', 'phone', 'role', 'active', 'declareCredits', 'last', 'order', 'links', 'createdAt', 'updatedAt'])
         && str(d.name, 40) && d.name.size() > 0
+        && (!('links' in d) || (d.links is list && d.links.size() <= 3))
         && str(d.phone, 30)
         && d.role in ['admin', 'member']
         && d.active is bool
@@ -119,8 +125,10 @@ service cloud.firestore {
     }
 
     match /members/{uid} {
+      // 일반 가족은 본인과, 관리자가 지정한 최대 3명(links)만 볼 수 있다. 전체 목록은 관리자만.
       // 본인 문서는 등록 전에도 읽을 수 있어야 "등록 대기" 화면이 등록 순간을 알아챈다.
-      allow read: if isMember() || isSelf(uid);
+      allow get: if isSelf(uid) || isAdmin() || isLinked(uid);
+      allow list: if isAdmin();
 
       allow create: if (isAdmin() && validMember(request.resource.data))
         || (
@@ -142,8 +150,14 @@ service cloud.firestore {
 
     // ---------- 민감한 개인정보 (본인과 관리자만) ----------
 
+    function loginIdUnchanged() {
+      return (resource == null && !('loginId' in request.resource.data))
+        || (resource != null && request.resource.data.get('loginId', null) == resource.data.get('loginId', null));
+    }
+
     function validProfile(d) {
-      return d.keys().hasOnly(['gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact', 'updatedAt'])
+      return d.keys().hasOnly(['loginId', 'gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact', 'updatedAt'])
+        && optStr(d, 'loginId', 30)
         && optStr(d, 'gender', 10)
         && optStr(d, 'birthDate', 10)
         && optStr(d, 'bloodType', 10)
@@ -154,8 +168,11 @@ service cloud.firestore {
     }
 
     match /profiles/{uid} {
-      allow read: if isAdmin() || (isSelf(uid) && isMember());
-      allow create, update: if (isAdmin() || (isSelf(uid) && isMember()))
+      // 비상시 필요한 정보(혈액형, 의료 메모 등)는 지정된 가족도 본다.
+      allow get: if isAdmin() || (isSelf(uid) && isMember()) || isLinked(uid);
+      allow list: if isAdmin();
+      // 로그인 아이디 기록은 관리자만 바꾼다 (본인이 바꾸면 관리자가 엉뚱한 아이디를 안내하게 된다).
+      allow create, update: if (isAdmin() || (isSelf(uid) && isMember() && loginIdUnchanged()))
         && validProfile(request.resource.data);
       allow delete: if isAdmin();
     }
@@ -273,10 +290,11 @@ service cloud.firestore {
     match /protocols/{id} {
       allow read: if isMember();
       allow create, update: if isAdmin()
-        && request.resource.data.keys().hasOnly(['title', 'icon', 'order', 'summary', 'steps', 'checklist', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['title', 'icon', 'order', 'summary', 'keyPoints', 'steps', 'checklist', 'updatedAt'])
         && str(request.resource.data.title, 60)
         && optStr(request.resource.data, 'icon', 8)
         && optStr(request.resource.data, 'summary', 300)
+        && (!('keyPoints' in request.resource.data) || (request.resource.data.keyPoints is list && request.resource.data.keyPoints.size() <= 6))
         && request.resource.data.steps is list && request.resource.data.steps.size() <= 10
         && request.resource.data.checklist is list && request.resource.data.checklist.size() <= 80;
       allow delete: if isAdmin();
@@ -290,6 +308,37 @@ service cloud.firestore {
         && request.resource.data.done is map
         && request.resource.data.done.size() <= 600;
       allow delete: if isAdmin();
+    }
+
+    // ---------- 가족 지정 연락처 (병원, 학교, 직장 등) ----------
+
+    match /contacts/{id} {
+      allow read: if isMember();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'category', 'note', 'order', 'updatedAt'])
+        && str(request.resource.data.name, 40) && request.resource.data.name.size() > 0
+        && str(request.resource.data.phone, 30)
+        && optStr(request.resource.data, 'category', 20)
+        && optStr(request.resource.data, 'note', 200)
+        && optNum(request.resource.data, 'order');
+      allow delete: if isAdmin();
+    }
+
+    // ---------- 관리 기록 (관리자 작업, 알림 발송 결과) ----------
+    // 관리자 화면이 남기는 기록. 알림 발송 결과는 Worker가 서비스 계정으로 남긴다(규칙을 거치지 않음).
+
+    match /auditLog/{id} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['action', 'target', 'targetName', 'detail', 'by', 'byName', 'at'])
+        && str(request.resource.data.action, 40)
+        && optStr(request.resource.data, 'target', 128)
+        && optStr(request.resource.data, 'targetName', 60)
+        && optStr(request.resource.data, 'detail', 300)
+        && request.resource.data.by == request.auth.uid
+        && str(request.resource.data.byName, 40)
+        && request.resource.data.at == request.time;
+      allow update, delete: if false;
     }
 
     // ---------- 알림 토큰 ----------

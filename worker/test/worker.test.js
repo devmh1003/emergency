@@ -116,7 +116,7 @@ beforeEach(async () => {
     const m = /documents\/([^?]+)/.exec(url);
     if (m) {
       const path = decodeURIComponent(m[1]);
-      if ((init.method || 'GET') === 'PATCH') return ok({});
+      if ((init.method || 'GET') === 'PATCH' || init.method === 'POST') return ok({});
       if (path === 'pushTokens') return ok({ documents: [fsDoc('pushTokens/tok-a', { uid: 'user-1' }), fsDoc('pushTokens/tok-b', { uid: 'gone' })] });
       if (path === 'members') return ok({ documents: Object.entries(db).filter(([k]) => k.startsWith('members/')).map(([k, v]) => fsDoc(k, v)) });
       if (db[path]) return ok(fsDoc(path, db[path]));
@@ -171,6 +171,13 @@ test('비상 알림은 활성 가족의 기기에만, 한 번만 보낸다', asy
   assert.equal(JSON.parse(fcm[0].body).message.token, 'tok-a');
   const patch = calls.find((c) => c.method === 'PATCH');
   assert.match(patch.url, /currentDocument.updateTime=/);
+  // 관리자 기록에 발송 결과가 남는다
+  const log = calls.find((c) => c.method === 'POST' && c.url.endsWith('/documents/auditLog'));
+  const fields = JSON.parse(log.body).fields;
+  assert.equal(fields.action.stringValue, 'notify.emergency');
+  assert.equal(fields.by.stringValue, 'user-1');
+  assert.match(fields.detail.stringValue, /1건 성공/);
+  assert.ok(fields.at.timestampValue);
 
   db['emergency/current'].notifiedKey = 'on:T1';
   calls = [];

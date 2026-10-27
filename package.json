@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/logic.test.js tests/sw.test.js worker/test/worker.test.js",
+    "test": "node --test tests/logic.test.js tests/sw.test.js tests/imports.test.js worker/test/worker.test.js",
     "test:rules": "firebase emulators:exec --only firestore --project demo-family \"node --test tests/rules.test.js\"",
     "serve": "node tools/serve.js"
   },

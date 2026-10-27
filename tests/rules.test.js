@@ -31,7 +31,7 @@ beforeEach(async () => {
     const db = ctx.firestore();
     await setDoc(doc(db, 'config/setup'), { by: 'admin', at: Timestamp.now() });
     await setDoc(doc(db, 'members/admin'), member('아빠', { role: 'admin' }));
-    await setDoc(doc(db, 'members/mom'), member('엄마'));
+    await setDoc(doc(db, 'members/mom'), member('엄마', { links: ['kid'] }));
     await setDoc(doc(db, 'members/kid'), member('아이', { declareCredits: 0 }));
     await setDoc(doc(db, 'members/off'), member('비활성', { active: false }));
     await setDoc(doc(db, 'profiles/mom'), { bloodType: 'A+', address: '서울' });
@@ -75,11 +75,28 @@ test('비활성화된 가족은 아무것도 못 본다', async () => {
   await assertFails(getDoc(doc(as('off'), 'emergency/current')));
 });
 
-test('가족은 가족 목록을 보지만 다른 사람의 민감 정보는 못 본다', async () => {
-  await assertSucceeds(getDocs(collection(as('mom'), 'members')));
+test('일반 가족은 지정된 가족(최대 3명)만 보고, 전체 목록은 관리자만 본다', async () => {
+  await assertFails(getDocs(collection(as('mom'), 'members')));
+  await assertSucceeds(getDocs(collection(as('admin'), 'members')));
+  await assertSucceeds(getDoc(doc(as('mom'), 'members/mom')));
+  await assertSucceeds(getDoc(doc(as('mom'), 'members/kid')));
+  await assertFails(getDoc(doc(as('mom'), 'members/admin')));
+  await assertFails(getDoc(doc(as('kid'), 'members/mom')));
+});
+
+test('민감 정보는 본인, 관리자, 지정된 가족만 본다', async () => {
   await assertSucceeds(getDoc(doc(as('mom'), 'profiles/mom')));
-  await assertFails(getDoc(doc(as('mom'), 'profiles/kid')));
+  await assertSucceeds(getDoc(doc(as('mom'), 'profiles/kid')));
+  await assertFails(getDoc(doc(as('kid'), 'profiles/mom')));
   await assertSucceeds(getDoc(doc(as('admin'), 'profiles/kid')));
+  await assertSucceeds(getDocs(collection(as('admin'), 'profiles')));
+  await assertFails(getDocs(collection(as('mom'), 'profiles')));
+});
+
+test('볼 수 있는 가족 지정은 관리자만, 3명까지', async () => {
+  await assertFails(updateDoc(doc(as('kid'), 'members/kid'), { links: ['mom'] }));
+  await assertSucceeds(updateDoc(doc(as('admin'), 'members/kid'), { links: ['mom', 'admin'] }));
+  await assertFails(updateDoc(doc(as('admin'), 'members/kid'), { links: ['a', 'b', 'c', 'd'] }));
 });
 
 test('위치 기록은 본인과 관리자만 본다', async () => {
@@ -247,4 +264,41 @@ test('초기 설정은 한 번만 할 수 있다', async () => {
 test('초기 설정 없이 스스로 관리자가 될 수 없다', async () => {
   await assertFails(bootstrap('attacker'));
   await assertFails(setDoc(doc(as('attacker'), 'members/attacker'), member('해커', { role: 'admin' })));
+});
+
+// ---------- 로그인 아이디·관리 기록·연락처 ----------
+
+test('로그인 아이디 기록은 관리자만 바꾼다', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'profiles/mom'), { loginId: 'mom', bloodType: 'A+' }));
+  await assertSucceeds(setDoc(doc(as('mom'), 'profiles/mom'), { address: '부산' }, { merge: true }));
+  await assertFails(setDoc(doc(as('mom'), 'profiles/mom'), { loginId: 'admin' }, { merge: true }));
+  await assertSucceeds(setDoc(doc(as('admin'), 'profiles/mom'), { loginId: 'mom2' }, { merge: true }));
+  // 아이디 기록이 없던 사람이 스스로 만들 수도 없다
+  await assertFails(setDoc(doc(as('kid'), 'profiles/kid'), { loginId: 'kid' }, { merge: true }));
+});
+
+test('관리 기록은 관리자만 남기고 읽으며, 고치거나 지울 수 없다', async () => {
+  const entry = (uid, name) => ({ action: 'member.create', target: 'x', targetName: '새 가족', detail: '', by: uid, byName: name, at: serverTimestamp() });
+  await assertFails(setDoc(doc(as('mom'), 'auditLog/a1'), entry('mom', '엄마')));
+  await assertFails(setDoc(doc(as('admin'), 'auditLog/a1'), entry('mom', '엄마')));
+  await assertSucceeds(setDoc(doc(as('admin'), 'auditLog/a1'), entry('admin', '아빠')));
+  await assertSucceeds(getDocs(collection(as('admin'), 'auditLog')));
+  await assertFails(getDocs(collection(as('mom'), 'auditLog')));
+  await assertFails(updateDoc(doc(as('admin'), 'auditLog/a1'), { detail: '조작' }));
+  await assertFails(deleteDoc(doc(as('admin'), 'auditLog/a1')));
+});
+
+test('가족 지정 연락처는 가족 모두 보고 관리자만 고친다', async () => {
+  const c = { name: '단골 병원', phone: '02-000-0000', category: '병원', note: '', order: 1 };
+  await assertFails(setDoc(doc(as('mom'), 'contacts/c1'), c));
+  await assertSucceeds(setDoc(doc(as('admin'), 'contacts/c1'), c));
+  await assertSucceeds(getDocs(collection(as('kid'), 'contacts')));
+  await assertFails(getDocs(collection(as('stranger'), 'contacts')));
+  await assertFails(setDoc(doc(as('admin'), 'contacts/c2'), { ...c, name: '' }));
+});
+
+test('프로토콜 핵심 요약은 6개까지', async () => {
+  const p = { title: '폭염', icon: '🌡️', order: 1, summary: '', keyPoints: ['a', 'b', 'c'], steps: [], checklist: [] };
+  await assertSucceeds(setDoc(doc(as('admin'), 'protocols/heat'), p));
+  await assertFails(setDoc(doc(as('admin'), 'protocols/heat'), { ...p, keyPoints: ['1', '2', '3', '4', '5', '6', '7'] }));
 });
