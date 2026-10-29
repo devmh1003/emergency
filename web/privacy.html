@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>개인정보 처리방침 · 우리 가족 비상연락</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/privacy.css">
+</head>
+<body>
+<main>
+  <h1>개인정보 처리방침</h1>
+  <p class="meta">우리 가족 비상연락 (웹 사이트와 안드로이드 앱) · 시행일 2026년 10월 29일</p>
+
+  <p>우리 가족 비상연락은 한 가족이 비상 상황에서 서로의 안전을 확인하고 다시 모이기 위해 직접 운영하는 비공개 서비스입니다. 가족 관리자가 등록한 사람만 접속 코드로 들어올 수 있고, 광고나 판매 목적으로 정보를 쓰지 않습니다.</p>
+
+  <h2>1. 수집하는 정보</h2>
+  <ul>
+    <li><strong>가족 정보</strong>: 이름, 전화번호, 권한(가족·관리자). 관리자가 등록합니다.</li>
+    <li><strong>선택 개인정보</strong>: 성별, 생년월일, 혈액형, 이메일, 주소, 비상연락처, 의료 메모. 본인이나 관리자가 넣었을 때만 저장됩니다.</li>
+    <li><strong>위치</strong>: 생존신고·체크포인트를 남길 때의 위치(위도·경도·정확도)와 시각. 본인이 신고 버튼을 누를 때만 저장되며, 계속 따라다니며 기록하지 않습니다. 집합장소까지의 거리·방향 계산은 휴대폰 안에서만 합니다.</li>
+    <li><strong>기록</strong>: 생존신고, 비상 선언·해제, 테스트 알람 확인, 집합장소 게시판 글, 관리자 작업 기록.</li>
+    <li><strong>알림 정보</strong>: 비상 알림을 보내기 위한 기기 알림 토큰과 기기 종류(브라우저·앱 정보).</li>
+  </ul>
+
+  <h2>2. 쓰는 목적</h2>
+  <p>비상 알림 보내기, 가족의 안전 상태와 마지막 위치 확인, 집합장소 안내, 관리 기록. 그 밖의 목적으로는 쓰지 않습니다.</p>
+
+  <h2>3. 누가 볼 수 있나요</h2>
+  <ul>
+    <li>본인, 가족 관리자, 그리고 관리자가 "볼 수 있는 가족"으로 지정한 사람(최대 3명)만 봅니다. 이 범위는 서버 보안 규칙이 강제합니다.</li>
+    <li>집합장소 게시판 글(이름, 메시지)은 가족 전체가 봅니다.</li>
+    <li>가족 밖의 사람이나 회사에 정보를 팔거나 넘기지 않습니다.</li>
+  </ul>
+
+  <h2>4. 저장 위치와 처리 위탁</h2>
+  <ul>
+    <li><strong>Google Firebase</strong> (인증, 데이터베이스, 알림 전송): 정보는 Google Cloud 서버에 저장됩니다.</li>
+    <li><strong>Cloudflare Workers</strong> (알림 발송 서버): 알림을 보낼 때만 정보를 읽고, 따로 저장하지 않습니다.</li>
+    <li><strong>GitHub Pages</strong>: 사이트 화면 파일만 제공하며, 가족 정보는 저장하지 않습니다.</li>
+    <li>지도 화면은 OpenStreetMap 지도 그림을 불러옵니다. 이때 지도 서버는 보고 있는 지역을 알 수 있습니다.</li>
+  </ul>
+
+  <h2>5. 보관 기간과 삭제</h2>
+  <p>가족이 서비스를 쓰는 동안 보관합니다. 관리자가 가족을 삭제하면 그 사람의 계정과 개인정보가 지워지고, 신고 기록은 관리자가 따로 지울 수 있습니다. 삭제나 열람을 원하면 가족 관리자에게 요청하세요.</p>
+
+  <h2>6. 안드로이드 앱 권한</h2>
+  <ul>
+    <li>알림, 전체 화면 알림, 방해 금지 모드 접근: 1급 비상 때 잠금 화면 위에 경보를 띄우고 경보음을 울리기 위해서입니다.</li>
+    <li>위치: 생존신고 위치와 집합장소 거리·방향을 위해서입니다. 앱을 쓰고 있을 때만 씁니다.</li>
+  </ul>
+
+  <h2>7. 아이</h2>
+  <p>가족 구성원으로 아이를 등록할 수 있지만, 등록과 관리는 보호자인 가족 관리자가 합니다.</p>
+
+  <h2>8. 문의</h2>
+  <p>이 서비스를 쓰는 가족의 관리자에게 문의하세요. 서비스 코드와 변경 내역은 <a href="https://github.com/devmh1003/emergency">github.com/devmh1003/emergency</a> 에서 볼 수 있습니다.</p>
+
+  <hr>
+
+  <h1 lang="en">Privacy Policy (English summary)</h1>
+  <div lang="en">
+    <p>Family Emergency is a private service run by one family so its members can check on each other and meet again in an emergency. Only people registered by the family admin can sign in with the access code. Nothing is used for advertising or sold.</p>
+    <ul>
+      <li><strong>Data</strong>: name and phone number; optional personal details (gender, birth date, blood type, email, address, emergency contact, medical notes); the location and time of a safety check-in, saved only when you tap the check-in button; check-in, emergency and admin records; push notification tokens.</li>
+      <li><strong>Purpose</strong>: sending emergency alerts, showing family safety status and last location, meeting point guidance, admin records.</li>
+      <li><strong>Who can see it</strong>: you, the family admins, and up to three family members the admin chooses, enforced by server security rules. Nothing is shared outside the family.</li>
+      <li><strong>Processors</strong>: Google Firebase (storage, sign-in, notifications), Cloudflare Workers (sending notifications), GitHub Pages (site files only), OpenStreetMap (map images).</li>
+      <li><strong>Deletion</strong>: ask the family admin. Deleting a member removes their account and personal details.</li>
+      <li><strong>Android permissions</strong>: notifications, full-screen alerts and Do Not Disturb access to show the Level 1 alarm over the lock screen; location while using the app for check-ins.</li>
+    </ul>
+  </div>
+</main>
+</body>
+</html>

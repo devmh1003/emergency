@@ -186,4 +186,5 @@ export const EN = {
   '전체 화면 알림 (잠금 화면 위 경보)': 'Full-screen alerts (alarm over the lock screen)',
   '방해 금지 모드 무시': 'Override Do Not Disturb',
   '배터리 최적화 제외': 'Exclude from battery optimization',
+  '개인정보 처리방침': 'Privacy policy',
 };

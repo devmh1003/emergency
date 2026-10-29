@@ -8,7 +8,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.WindowInsets;
+import android.widget.FrameLayout;
+import android.window.OnBackInvokedDispatcher;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -98,7 +103,14 @@ public class MainActivity extends Activity {
                 }
             }
         });
-        setContentView(web);
+        FrameLayout frame = new FrameLayout(this);
+        frame.addView(web, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        padForSystemBars(frame);
+        setContentView(frame);
+        // 안드로이드 13+ 뒤로 가기 (16부터는 onBackPressed 가 불리지 않는다)
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::goBack);
+        }
         if (saved != null) web.restoreState(saved);
         else web.loadUrl(SITE);
 
@@ -153,11 +165,32 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
-    @Override
-    public void onBackPressed() {
+    private void goBack() {
         if (web != null && web.canGoBack()) web.goBack();
         else moveTaskToBack(true);
     }
+
+    // 안드로이드 12 이하용. 13부터는 onCreate 에서 등록한 OnBackInvokedDispatcher 가 처리한다.
+    @SuppressLint("GestureBackNavigation")
+    @Override
+    public void onBackPressed() {
+        goBack();
+    }
+
+    /** 상태 표시줄·내비게이션 바·키보드에 가리지 않도록 그만큼 안쪽 여백을 준다 (안드로이드 15부터 앱은 화면 끝까지 그려진다). */
+    static void padForSystemBars(View view) {
+        view.setOnApplyWindowInsetsListener((v, insets) -> {
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            } else {
+                v.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(),
+                        insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            }
+            return insets;
+        });
+    }
+
 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {

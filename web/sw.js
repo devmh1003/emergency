@@ -12,6 +12,8 @@ const APP_FILES = [
   'index.html',
   'manifest.webmanifest',
   'css/app.css',
+  'css/privacy.css',
+  'privacy.html',
   'icons/icon.svg',
   'icons/icon-192.png',
   'icons/icon-512.png',

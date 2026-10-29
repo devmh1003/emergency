@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 안드로이드 15부터 앱은 화면 끝까지 그려진다. 상태 표시줄 자리는 흰 바탕에 어두운 아이콘. -->
     <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:statusBarColor">#1a4480</item>
-        <item name="android:navigationBarColor">#ffffff</item>
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
     <!-- 경보 화면: 화면 전체를 덮는다 -->
     <style name="AlarmTheme" parent="android:Theme.Material.NoActionBar.Fullscreen">

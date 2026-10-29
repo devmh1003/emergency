@@ -186,3 +186,4 @@ gradle assembleRelease   # app/build/outputs/apk/release/app-release.apk
 - `android/local.properties` 에 `sdk.dir=...`, `android/keystore.properties` 에 서명 키 정보(storeFile, storePassword, keyAlias, keyPassword)를 둡니다. 둘 다 저장소에 올리지 않습니다.
 - **서명 키를 잃어버리면 앱을 업데이트할 수 없습니다** (지우고 다시 설치해야 함). 키 파일과 비밀번호를 따로 백업하세요.
 - 배포: GitHub Releases 에 `family-emergency.apk` 로 올리면, 안드로이드 휴대폰의 설정 화면에 받기 링크가 보입니다.
+- 구글 플레이(가족만, 내부 테스트) 등록 방법과 심사 양식 답변: [docs/play-store.md](docs/play-store.md)

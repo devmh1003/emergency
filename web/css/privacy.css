@@ -1,0 +1,23 @@
+/* 개인정보 처리방침 페이지 (privacy.html) */
+:root { color-scheme: light dark; }
+body {
+  margin: 0;
+  background: #ffffff;
+  color: #1b1b1b;
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+main { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+h1 { font-size: 1.6rem; line-height: 1.3; margin: 1.5rem 0 0.25rem; }
+h2 { font-size: 1.15rem; margin: 1.75rem 0 0.5rem; }
+.meta { color: #565c65; margin-top: 0; }
+ul { padding-left: 1.25rem; }
+li + li { margin-top: 0.35rem; }
+a { color: #005ea2; }
+hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid #dfe1e2; }
+
+@media (prefers-color-scheme: dark) {
+  body { background: #1b1b1b; color: #f0f0f0; }
+  .meta { color: #b0b4ba; }
+  a { color: #73b3e7; }
+  hr { border-top-color: #3d4551; }
+}

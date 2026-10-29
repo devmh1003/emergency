@@ -282,7 +282,8 @@ export function settingsView({ state }) {
           await disablePush();
           await logout();
         },
-      }, t('로그아웃'))));
+      }, t('로그아웃'))),
+    h('p', { class: 'small center' }, h('a', { href: './privacy.html' }, t('개인정보 처리방침'))));
 }
 
 // ---------- 경보 대기 모드 ----------

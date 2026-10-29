@@ -18,6 +18,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.window.OnBackInvokedDispatcher;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -69,7 +70,11 @@ public class PermissionsActivity extends Activity {
         int pad = dp(20);
         list.setPadding(pad, pad, pad, pad);
         scroll.addView(list);
+        MainActivity.padForSystemBars(scroll);
         setContentView(scroll);
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::finish);
+        }
     }
 
     @Override
@@ -94,8 +99,8 @@ public class PermissionsActivity extends Activity {
         });
         item("③ 방해 금지 모드 무시", "방해 금지·무음 모드에서도 1급 경보음이 울립니다. 목록에서 이 앱을 찾아 허용하세요.", dnd(this),
                 () -> open(new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)));
-        item("④ 배터리 최적화 제외", "휴대폰이 앱을 잠재워 경보를 놓치지 않게 합니다.", battery(this),
-                () -> open(new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()))));
+        item("④ 배터리 최적화 제외", "휴대폰이 앱을 잠재워 경보를 놓치지 않게 합니다. 목록에서 '우리 가족 비상연락'을 찾아 '최적화 안 함'(또는 '제한 없음')으로 바꾸세요.", battery(this),
+                () -> open(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)));
         item("⑤ 위치", "생존신고와 집합장소 거리·방향에 씁니다.", location(this),
                 () -> requestPermissions(new String[] {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ));
 

@@ -1,5 +1,6 @@
 package io.github.devmh1003.emergency;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.KeyguardManager;
 import android.content.Context;
@@ -22,6 +23,7 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.window.OnBackInvokedDispatcher;
 
 /**
  * 잠금 화면 위에 뜨는 1급 비상 전체 화면 경보. 확인을 누를 때까지 경보음(알람 소리)과 진동이 반복된다.
@@ -57,6 +59,9 @@ public class AlarmActivity extends Activity {
         }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         render(getIntent());
+        if (Build.VERSION.SDK_INT >= 33) {
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::confirm);
+        }
         // 알림의 반복 소리는 끄고, 이 화면이 경보음을 낸다.
         Alarms.cancelUrgent(this);
         startSound(getIntent().getBooleanExtra(EXTRA_TEST, false));
@@ -105,6 +110,7 @@ public class AlarmActivity extends Activity {
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(test ? Color.parseColor("#162e51") : Color.parseColor("#33190a"));
         scroll.addView(box, new ScrollView.LayoutParams(ScrollView.LayoutParams.MATCH_PARENT, ScrollView.LayoutParams.MATCH_PARENT));
+        MainActivity.padForSystemBars(scroll);
         setContentView(scroll);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
@@ -173,6 +179,8 @@ public class AlarmActivity extends Activity {
         }
     }
 
+    // 안드로이드 12 이하용. 13부터는 onCreate 에서 등록한 OnBackInvokedDispatcher 가 처리한다.
+    @SuppressLint("GestureBackNavigation")
     @Override
     public void onBackPressed() {
         confirm();
