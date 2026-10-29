@@ -362,4 +362,7 @@ export const EN = {
   '휴대폰 설정 → 애플리케이션 → "우리 가족 비상연락"(홈 화면에 설치했을 때) 또는 Chrome → 알림으로 들어갑니다.': 'Go to phone Settings → Apps → "Family Emergency" (if installed to the home screen) or Chrome → Notifications.',
   '알림 항목에서 소리를 받은 파일로 바꾸고, "방해 금지 모드 무시"가 있으면 켭니다.': 'Change the notification sound to the downloaded file, and turn on "Override Do Not Disturb" if available.',
   '아이폰은 웹 앱의 알림 소리를 바꿀 수 없습니다.': 'iPhone does not allow changing the notification sound of web apps.',
+  '🔔 테스트 경보': '🔔 Test alarm',
+  '가족에게 테스트 경보 보내기': 'Send a test alarm to family',
+  '이 휴대폰에서만 시험': 'Test on this phone only',
 };

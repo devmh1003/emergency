@@ -333,7 +333,7 @@ export function emergencyControl(state) {
   if (!level) {
     return h('div', { class: 'stack' },
       alertBox('success', t('지금은 평상시입니다'), h('p', null, t('비상이 생기면 아래 상황 버튼을 누르고 확인하면 바로 가족 모두에게 갑니다.'))),
-      quickDeclarePanel(state),
+      quickDeclarePanel(state, { flat: true }),
       h('p', { class: 'small' }, h('a', { href: '#/emergency' }, t('메시지를 함께 보내려면 비상 경보 화면에서 발령하세요 →'))));
   }
   const actor = levelActor(e);
@@ -410,7 +410,7 @@ const QUICK_DECLARE = [
   { level: 'alert', title: '2급 비상 — 알림만 (준위험)', items: [['flood', '🌀'], ['fire', '🔥'], ['heat', '🌡️'], ['cold', '❄️'], ['blackout', '🔌'], ['pandemic', '🦠'], ['other', '⚠️']] },
 ];
 
-export function quickDeclarePanel(state) {
+export function quickDeclarePanel(state, { flat = false } = {}) {
   if (!state.isAdmin) return null;
   const button = (level, type, icon) => {
     const name = t(emergencyLabel(type));
@@ -437,12 +437,15 @@ export function quickDeclarePanel(state) {
       },
     }, h('span', { class: 'quick-icon', 'aria-hidden': 'true' }, icon), h('span', null, name));
   };
-  return panel(t('⚡ 빠른 비상 선언'), null,
+  const body = [
     h('p', { class: 'muted small' }, t('상황을 누르고 확인하면 바로 가족 모두에게 갑니다.')),
     QUICK_DECLARE.map((g) => [
       h('h3', { class: `panel-subhead quick-head-${g.level}` }, t(g.title)),
       h('div', { class: 'quick-grid' }, g.items.map(([type, icon]) => button(g.level, type, icon))),
-    ]));
+    ]),
+  ];
+  if (flat) return h('div', { class: 'quick-flat' }, h('h3', { class: 'panel-subhead' }, t('⚡ 빠른 비상 선언')), body);
+  return panel(t('⚡ 빠른 비상 선언'), null, body);
 }
 
 function declareCard(state, navigate) {
@@ -609,11 +612,14 @@ export function testPanel(state, unsubs, onChange) {
   }, () => resultBox.replaceChildren(empty(t('테스트 기록을 불러오지 못했습니다.')))));
   unsubs.push(() => ackUnsub?.());
 
-  return panel(t('🔊 소리·알림 테스트'), null,
-    h('h3', { class: 'panel-subhead' }, t('이 휴대폰에서 듣기')),
-    local,
-    h('h3', { class: 'panel-subhead' }, t('가족 테스트 알람')),
+  // 관리자: 가족에게 보내는 테스트 경보를 먼저, 이 휴대폰에서만 하는 시험은 아래에
+  const box = panel(t('🔔 테스트 경보'), null,
+    h('h3', { class: 'panel-subhead' }, t('가족에게 테스트 경보 보내기')),
     h('p', null, t('고른 가족의 휴대폰에서 "테스트" 표시와 함께 경보가 울립니다. 각자 확인을 누르면 아래 표에 표시됩니다. 실제 경보 상태는 바뀌지 않습니다.')),
     form,
-    resultBox);
+    resultBox,
+    h('h3', { class: 'panel-subhead' }, t('이 휴대폰에서만 시험')),
+    local);
+  box.id = 'test-alarm';
+  return box;
 }

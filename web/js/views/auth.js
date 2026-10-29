@@ -21,8 +21,13 @@ export function configNeededView() {
 
 /** 언어 전환 버튼 (로그인 전에도 보이게) */
 export function langToggle(cls = 'btn btn-outline btn-sm') {
-  return h('button', { type: 'button', class: cls, lang: lang === 'en' ? 'ko' : 'en', onClick: () => setLang(lang === 'en' ? 'ko' : 'en') },
-    lang === 'en' ? '한국어' : 'English');
+  const label = lang === 'en' ? '한국어' : 'English';
+  return h('button', {
+    type: 'button', class: cls, lang: lang === 'en' ? 'ko' : 'en', 'aria-label': label,
+    onClick: () => setLang(lang === 'en' ? 'ko' : 'en'),
+  },
+  h('span', { class: 'lang-long' }, label),
+  h('span', { class: 'lang-short', 'aria-hidden': 'true' }, lang === 'en' ? '한' : 'EN'));
 }
 
 /** 코드 칸 + 보기 버튼 (+ 자동 생성) */

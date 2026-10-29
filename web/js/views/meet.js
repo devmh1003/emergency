@@ -112,7 +112,10 @@ export function meetView({ state, live, onChange }) {
   return h('div', { class: 'page' },
     pageHeader(t('집합장소'), { lead: t('1순위 장소에 정해진 시간까지 모이고, 다 모이지 못하면 다음 순위로 이동합니다.') },
       state.isAdmin ? h('a', { class: 'btn btn-outline', href: '#/admin/meet' }, t('집합장소 설정')) : null),
-    h('div', { class: 'card' }, live(() => stepIndicator(state))),
+    live(() => {
+      const steps = stepIndicator(state);
+      return steps ? h('div', { class: 'card' }, steps) : null;
+    }),
     live(() => targetCard(state)),
     panel(t('내 위치에서 집합장소까지'), null, locationPanel(state, { onChange })),
     panel(t('1~10순위 일정'), null, live(() => scheduleTable(state))),

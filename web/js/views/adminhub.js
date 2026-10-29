@@ -89,7 +89,11 @@ export function adminHubView({ state, live, onChange }) {
   window.addEventListener('hashchange', () => unsubs.forEach((u) => u()), { once: true });
 
   return h('div', { class: 'page' },
-    pageHeader(t('관리자 설정'), { lead: t('비상 선언과 해제, 소리·알림 테스트, 가족 등록을 이 화면에서 합니다.') }),
+    pageHeader(t('관리자 설정'), { lead: t('비상 선언과 해제, 소리·알림 테스트, 가족 등록을 이 화면에서 합니다.') },
+      h('button', {
+        type: 'button', class: 'btn btn-outline',
+        onClick: () => document.getElementById('test-alarm')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      }, t('🔔 테스트 경보'))),
 
     panel(t('🚨 비상 선언·해제'), { href: '#/emergency', label: t('비상 경보 화면') },
       live(() => emergencyControl(state)),
