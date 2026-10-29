@@ -60,6 +60,9 @@ export const EN = {
   '테스트 알림 발송': 'Test notification sent',
   '테스트 알람 발송': 'Test alarm sent',
   '재난문자 자동 경보 설정': 'Emergency alert auto-alarm settings',
+  '도움 요청 알림 발송': 'Help request notification sent',
+  '접속 코드 사용자 모두 로그아웃': 'Signed out everyone using an access code',
+  '접속 잠금 해제': 'Login lock cleared',
 
   // ---------- logic.js: 비상 기록 제목·타임라인 ----------
   '비상 해제': 'Emergency ended',

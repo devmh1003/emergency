@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 const jsDir = fileURLToPath(new URL('../web/js/', import.meta.url));
 
@@ -48,4 +49,15 @@ test('로컬 모듈의 import 이름이 모두 실제로 export되어 있다', (
     }
   }
   assert.deepEqual(problems, []);
+});
+
+test('사이트 스크립트에 문법 오류가 없다 (하나라도 있으면 화면이 통째로 안 뜬다)', () => {
+  const swPath = fileURLToPath(new URL('../web/sw.js', import.meta.url));
+  for (const file of [...walk(jsDir), swPath]) {
+    try {
+      execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
+    } catch (err) {
+      assert.fail(`${relative(jsDir, file)}: ${String(err.stderr).split('\n').slice(0, 5).join('\n')}`);
+    }
+  }
 });

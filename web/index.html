@@ -8,7 +8,7 @@
     지도 타일, Cloudflare Worker 외에는 아무것도 불러오지 않는다.
     Worker를 workers.dev 가 아닌 다른 주소로 쓰면 connect-src 에 그 주소를 추가한다.
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://cdnjs.cloudflare.com; style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https://tile.openstreetmap.org https://cdnjs.cloudflare.com https://www.google.com; connect-src 'self' https://*.googleapis.com https://www.gstatic.com https://*.workers.dev http://127.0.0.1:9099 http://127.0.0.1:8080; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://www.gstatic.com https://cdnjs.cloudflare.com; style-src 'self' https://cdnjs.cloudflare.com https://fonts.googleapis.com https://cdn.jsdelivr.net; font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: https://tile.openstreetmap.org https://cdnjs.cloudflare.com https://www.google.com; connect-src 'self' https://*.googleapis.com https://www.gstatic.com https://*.workers.dev http://127.0.0.1:9099 http://127.0.0.1:8080 http://localhost:8787; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>우리 가족 비상연락</title>
   <meta name="description" content="비상 상황에서 가족의 안전을 확인하고 다시 모이기 위한 가족 전용 서비스">

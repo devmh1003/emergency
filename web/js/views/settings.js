@@ -4,7 +4,7 @@ import {
   FONT_SCALES, savedFontScale, applyFontScale, ask, nativeApp, isAndroid, ANDROID_APP_URL,
 } from '../dom.js';
 import { config, logout, errorMessage, callWorker } from '../firebase.js';
-import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, deleteLegacyMembers } from '../store.js';
+import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, rekeyAccess, deleteLegacyMembers } from '../store.js';
 import { enablePush, pushStatus, disablePush } from '../push.js';
 import { mapView } from '../map.js';
 import { previewAlarm } from './emergency.js';
@@ -204,21 +204,31 @@ function accessCodePanel(state) {
       field(t('새 {label}', { label: codeLabel(kind) }), h('div', { class: 'input-group' },
         h('input', { name: 'code', type: 'text', required: true, minlength: kind === 'family' ? 6 : 8, maxlength: 64, autocomplete: 'off', spellcheck: 'false', autocapitalize: 'off' }),
         h('button', { class: 'btn btn-base btn-sm', type: 'button', onClick: () => { form.elements.code.value = randomDigits(8); } }, t('자동 생성')))),
+      // 코드가 새어 나갔으면 그 코드로 이미 들어와 있는 휴대폰도 내보낸다 (이름 목록의 로그인 열쇠를 모두 바꾼다).
+      kind === 'backup' ? null : h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'rekey' }),
+        h('span', null, t('코드가 새어 나갔어요: 이 코드로 들어와 있는 휴대폰을 모두 로그아웃시키기 (가족은 새 코드로 다시 들어와야 합니다)'))),
       h('div', { class: 'row' },
         h('button', { class: 'btn btn-outline btn-sm', type: 'button', onClick: () => { form.hidden = true; form.reset(); } }, t('취소')),
         h('button', { class: 'btn btn-sm', type: 'submit' }, t('바꾸기'))));
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const { code } = formData(form);
+      const rekey = Boolean(form.elements.rekey?.checked);
       const problem = accessCodeProblem(code, kind);
       if (problem) { toast(problem, 'error'); return; }
-      if (!(await ask(t('{label}를 바꿀까요? 예전 코드로는 더 이상 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로입니다.', { label: codeLabel(kind) })))) return;
+      const question = rekey
+        ? t('{label}를 바꾸고, 이 코드로 들어와 있는 휴대폰을 모두 로그아웃시킬까요? 가족은 새 코드로 다시 들어와 이름을 골라야 합니다.', { label: codeLabel(kind) })
+        : t('{label}를 바꿀까요? 예전 코드로는 더 이상 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로입니다.', { label: codeLabel(kind) });
+      if (!(await ask(question))) return;
       busy(form.querySelector('button[type=submit]'), async () => {
         try {
           await changeAccessCode(kind, code);
+          const r = rekey ? await rekeyAccess(kind) : null;
           form.hidden = true;
           form.reset();
-          toast(t('{label}를 바꿨습니다. 새 코드를 적어 두고 필요한 가족에게 알려 주세요.', { label: codeLabel(kind) }));
+          toast(r
+            ? t('{label}를 바꾸고 {n}명의 로그인을 새로 만들었습니다. 새 코드를 가족에게 알려 주세요.', { label: codeLabel(kind), n: r.changed })
+            : t('{label}를 바꿨습니다. 새 코드를 적어 두고 필요한 가족에게 알려 주세요.', { label: codeLabel(kind) }));
         } catch (err) {
           toast(errorMessage(err), 'error');
         }
@@ -283,7 +293,29 @@ export function settingsView({ state }) {
           await logout();
         },
       }, t('로그아웃'))),
-    h('p', { class: 'small center' }, h('a', { href: './privacy.html' }, t('개인정보 처리방침'))));
+    deletePanel(state),
+    h('p', { class: 'small center' }, h('a', { href: './privacy.html' }, t('개인정보 처리방침')), ' · ',
+      h('a', { href: './delete-account.html' }, t('계정 삭제 안내'))));
+}
+
+/** 내 계정 삭제: 내 정보·신고 기록·로그인 계정을 지운다 (비상 선언 기록은 가족 기록이라 남는다). */
+function deletePanel(state) {
+  return panel(t('계정 삭제'), null,
+    h('p', { class: 'small muted' }, t('내 가족 정보, 개인정보, 신고 기록, 게시판 글, 알림 등록과 로그인 계정을 지웁니다. 되돌릴 수 없고, 다시 쓰려면 관리자가 새로 등록해야 합니다. 비상 선언·해제 기록은 가족 전체의 기록이라 남습니다.')),
+    h('button', {
+      class: 'btn btn-outline-secondary',
+      onClick: (e) => busy(e.currentTarget, async () => {
+        if (!(await ask(t('내 계정을 지울까요? 되돌릴 수 없습니다.'), { danger: true }))) return;
+        if (!(await ask(t('정말 지울까요? 지우면 이 앱으로 비상 알림을 받을 수 없습니다.'), { ok: t('계정 삭제'), danger: true }))) return;
+        try {
+          await callWorker('/me/delete');
+          toast(t('계정을 지웠습니다.'));
+          await logout();
+        } catch (err) {
+          toast(errorMessage(err), 'error');
+        }
+      }),
+    }, t('내 계정 삭제')));
 }
 
 // ---------- 경보 대기 모드 ----------

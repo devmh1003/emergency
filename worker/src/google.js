@@ -107,6 +107,23 @@ export async function signServiceJwt(sa, now = Date.now()) {
   return `${header}.${claims}.${base64UrlEncode(sig)}`;
 }
 
+/** Firebase 맞춤 토큰: 사이트가 이 토큰으로 그 계정에 로그인한다 (접속 코드는 알림 서버가 확인). */
+export async function createCustomToken(sa, uid, now = Date.now()) {
+  const iat = Math.floor(now / 1000);
+  const header = base64UrlEncode(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: sa.private_key_id }));
+  const claims = base64UrlEncode(JSON.stringify({
+    iss: sa.client_email,
+    sub: sa.client_email,
+    aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+    iat,
+    exp: iat + 3600,
+    uid,
+  }));
+  const key = await crypto.subtle.importKey('pkcs8', pemToPkcs8(sa.private_key), { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, enc.encode(`${header}.${claims}`));
+  return `${header}.${claims}.${base64UrlEncode(sig)}`;
+}
+
 export async function getAccessToken(sa) {
   if (tokenCache.token && Date.now() < tokenCache.expires) return tokenCache.token;
   const res = await fetch('https://oauth2.googleapis.com/token', {

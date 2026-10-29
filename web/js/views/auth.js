@@ -2,8 +2,8 @@
 // 접속 코드는 3가지다: 가족 코드(일반 가족), 관리자 코드(관리자), 백업 코드(관리자 코드를 잊었을 때).
 import { h, field, formData, toast, busy, alertBox } from '../dom.js';
 import { config, logout, errorMessage } from '../firebase.js';
-import { loginWithCode, loginAsPerson, getAccess, setupAccess, changeAccessCode, backupAddAdmin } from '../store.js';
-import { accessCodeProblem, accessCodesProblem, codeLabel, randomDigits } from '../logic.js';
+import { loginWithCode, loginAsPerson, getAccess, setupAccess, changeAccessCode, rekeyAccess, backupAddAdmin } from '../store.js';
+import { accessCodeProblem, accessCodesProblem, codeLabel, randomDigits, formatDateTime } from '../logic.js';
 import { t, lang, setLang } from '../i18n.js';
 
 const LAST_PERSON_KEY = 'family.lastPerson';
@@ -63,20 +63,37 @@ function authCard(title, ...children) {
 
 // ---------- 1단계: 접속 코드 ----------
 
+/** 틀렸을 때·잠겼을 때 코드 칸 아래에 남기는 안내 */
+function loginProblem(err) {
+  if (err.lockedUntil) {
+    return alertBox('error', t('접속이 잠겼습니다'),
+      h('p', null, t('접속 코드를 3번 틀려 {time}까지 이 기기와 인터넷에서는 들어올 수 없습니다.', { time: formatDateTime(err.lockedUntil) })),
+      h('p', null, t('급하면 관리자에게 잠금 해제를 부탁하세요 (관리자 설정 → 접속 잠금).')));
+  }
+  if (Number.isInteger(err.left)) {
+    return alertBox('warning', null, h('p', null, t('접속 코드가 맞지 않습니다. {left}번 더 틀리면 하루 동안 들어올 수 없습니다.', { left: err.left })));
+  }
+  return alertBox('error', null, h('p', null, errorMessage(err)));
+}
+
 export function loginView() {
+  const problem = h('div', { role: 'status', 'aria-live': 'polite' });
   const form = h('form', { class: 'stack', autocomplete: 'off' },
-    field(t('접속 코드'), codeInput('code', { autocomplete: 'current-password' }), t('가족 코드, 관리자 코드, 백업 코드 중 하나를 넣으세요.')),
+    field(t('접속 코드'), codeInput('code', { autocomplete: 'current-password' }), t('가족 코드, 관리자 코드, 백업 코드 중 하나를 넣으세요. 3번 틀리면 하루 동안 잠깁니다.')),
+    problem,
     h('button', { class: 'btn btn-lg btn-block', type: 'submit' }, t('들어가기')));
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const { code } = formData(form);
+    problem.replaceChildren();
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
         await loginWithCode(code);
         // 다음 화면(이름 고르기 또는 백업 화면)은 로그인 상태가 바뀌면 app.js가 띄운다.
       } catch (err) {
-        toast(errorMessage(err), 'error');
+        problem.replaceChildren(loginProblem(err));
+        form.querySelector('input[name=code]').select();
       }
     });
   });
@@ -131,6 +148,8 @@ export function backupView() {
   const codeForm = h('form', { class: 'stack' },
     field(t('새 관리자 코드'), codeInput('code', { generate: true, minlength: 8 }), t('8자 이상. 기존 관리자 코드는 바로 쓸 수 없게 됩니다.')),
     field(t('새 관리자 코드 확인'), codeInput('code2', { minlength: 8 })),
+    h('label', { class: 'check' }, h('input', { type: 'checkbox', name: 'rekey' }),
+      h('span', null, t('관리자 코드가 새어 나갔어요: 관리자 휴대폰을 모두 로그아웃시키기'))),
     h('button', { class: 'btn btn-block', type: 'submit' }, t('관리자 코드 바꾸기')));
   codeForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -140,6 +159,7 @@ export function backupView() {
     busy(codeForm.querySelector('button[type=submit]'), async () => {
       try {
         await changeAccessCode('admin', d.code);
+        if (codeForm.elements.rekey.checked) await rekeyAccess('admin');
         codeForm.reset();
         toast(t('관리자 코드를 바꿨습니다. 새 코드로 들어가세요.'));
       } catch (err) {

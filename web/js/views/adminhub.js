@@ -4,6 +4,7 @@ import { h, field, select, formData, toast, busy, panel, pageHeader, empty, aler
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
+  watchLoginLocks, clearLoginLock,
 } from '../store.js';
 import { emergencyLogTitle, formatDateTime, toDate } from '../logic.js';
 import { t } from '../i18n.js';
@@ -69,8 +70,21 @@ function memberTable(state) {
   ]));
 }
 
-// 알림 서버는 1분마다 확인한다. 이보다 오래 소식이 없으면 멈춘 것으로 본다.
+// 알림 서버는 1~2분마다 확인한다. 이보다 오래 소식이 없으면 멈춘 것으로 본다.
 const FEED_STALE_MS = 5 * 60 * 1000;
+// 재난문자 인증키 하나의 하루 호출 한도 (알림 서버가 940번 안에서 나눠 쓴다)
+const DAILY_LIMIT = 1000;
+const DAILY_BUDGET = 940;
+
+/** "오늘 312/1,000회 사용 · 지금 2분마다 확인" (한국 시각 날짜가 바뀌면 0부터) */
+function feedUsage(feed) {
+  const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+  const used = feed?.callsDay === today ? Number(feed.calls) || 0 : 0;
+  const every = feed?.callsDay === today ? Number(feed.every) || 0 : 0;
+  return h('p', { class: 'muted small' }, every
+    ? t('오늘 재난문자 조회 {used}/{limit}회 · 지금 {every}분마다 확인', { used, limit: DAILY_LIMIT.toLocaleString(), every })
+    : t('오늘 재난문자 조회 {used}/{limit}회', { used, limit: DAILY_LIMIT.toLocaleString() }));
+}
 
 function feedStatus(feed) {
   if (!feed?.checkedAt) {
@@ -79,6 +93,10 @@ function feedStatus(feed) {
   const at = toDate(feed.checkedAt);
   if (feed.error) {
     return alertBox('error', null, h('p', null, t('재난문자를 받아 오지 못했습니다 ({time}): {error}', { time: formatDateTime(at), error: feed.error })));
+  }
+  const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+  if (feed.callsDay === today && Number(feed.calls) >= DAILY_BUDGET) {
+    return alertBox('warning', null, h('p', null, t('오늘 재난문자 조회 한도를 다 써서 자정(한국 시각)까지 확인을 쉽니다. 마지막 확인: {time}', { time: formatDateTime(at) })));
   }
   if (!at || Date.now() - at.getTime() > FEED_STALE_MS) {
     return alertBox('warning', null, h('p', null, t('최근 5분 동안 재난문자를 확인하지 않았습니다. 마지막 확인: {time}', { time: formatDateTime(at) })));
@@ -129,17 +147,49 @@ function disasterPanel(state, unsubs) {
     saved.textContent = doc?.updatedAt ? t('{name} · {time} 저장', { name: doc.updatedByName || '', time: formatDateTime(doc.updatedAt) }) : '';
   }, () => {}));
   unsubs.push(watchDisasterFeed((feed) => {
-    status.replaceChildren(feedStatus(feed));
+    status.replaceChildren(feedStatus(feed), feed?.checkedAt ? feedUsage(feed) : '');
     hit.replaceChildren(lastHit(feed));
   }, () => status.replaceChildren(h('p', { class: 'muted small' }, t('상태를 불러오지 못했습니다.')))));
 
   return panel(t('📡 정부 재난문자 자동 경보'), null,
-    h('p', { class: 'small' }, t('행정안전부 긴급재난문자를 1분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.')),
+    h('p', { class: 'small' }, t('행정안전부 긴급재난문자를 1~2분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.')),
+    h('p', { class: 'muted small' }, t('조회는 하루 1,000번까지라 남은 횟수를 자정까지 나눠 씁니다. 우리 지역에 긴급 재난문자가 오거나 비상 중일 때는 1분마다 봅니다.')),
     h('p', { class: 'muted small' }, t('안전안내 문자, 훈련 안내, 해제 안내로는 울리지 않습니다. 이미 비상 중이면 새로 선언하지 않고, 해제는 관리자가 직접 합니다.')),
     status,
     form,
     h('h3', { class: 'panel-subhead' }, t('최근 자동 경보')),
     hit);
+}
+
+/** 접속 코드를 3번 틀려 잠긴 기기·인터넷 주소. 가족이 실수로 잠겼으면 여기서 풀어 준다. */
+function lockPanel(unsubs) {
+  const box = h('div', null, h('p', { class: 'muted small' }, t('불러오는 중…')));
+  unsubs.push(watchLoginLocks((list) => {
+    const now = Date.now();
+    const locked = list.filter((l) => toDate(l.lockedUntil)?.getTime() > now)
+      .sort((a, b) => toDate(b.lastAt) - toDate(a.lastAt));
+    const trying = list.filter((l) => !locked.includes(l) && l.fails > 0 && now - (toDate(l.firstFailAt)?.getTime() || 0) < 24 * 3600e3);
+    if (!locked.length && !trying.length) {
+      box.replaceChildren(h('p', { class: 'muted small' }, t('잠긴 곳이 없습니다.')));
+      return;
+    }
+    box.replaceChildren(h('ul', { class: 'list list-compact' }, [...locked, ...trying].map((l) => h('li', { class: 'list-item small' },
+      h('span', null, h('strong', null, l.kind === 'device' ? t('기기') : t('인터넷 주소')), ` ${l.label || ''} · `,
+        locked.includes(l) ? t('{time}까지 잠김', { time: formatDateTime(l.lockedUntil) }) : t('{n}번 틀림 (잠기지 않음)', { n: l.fails })),
+      ' ',
+      h('button', {
+        class: 'btn btn-sm btn-outline',
+        onClick: (ev) => busy(ev.currentTarget, async () => {
+          try {
+            await clearLoginLock(l);
+            toast(t('잠금을 풀었습니다.'));
+          } catch (err) { toast(errorMessage(err), 'error'); }
+        }),
+      }, locked.includes(l) ? t('잠금 풀기') : t('기록 지우기'))))));
+  }, () => box.replaceChildren(h('p', { class: 'muted small' }, t('상태를 불러오지 못했습니다.')))));
+  return panel(t('🔒 접속 잠금'), null,
+    h('p', { class: 'small muted' }, t('같은 휴대폰이나 같은 인터넷(집 와이파이 등)에서 접속 코드를 3번 틀리면 하루 동안 새로 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로 씁니다. 가족이 실수로 잠겼다면 풀어 주세요.')),
+    box);
 }
 
 const SHORTCUTS = [
@@ -180,6 +230,8 @@ export function adminHubView({ state, live, onChange }) {
         : null))),
 
     disasterPanel(state, unsubs),
+
+    lockPanel(unsubs),
 
     tests,
 

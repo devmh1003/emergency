@@ -1,5 +1,6 @@
 // 행정안전부 긴급재난문자 자동 감시 (재난안전데이터공유플랫폼 DSSP-IF-00247)
-// 1분마다 새 재난문자를 읽어, 정말 위급한 문자(전쟁·공습, 지진 등)면 가족 비상을 자동으로 선언한다.
+// 1~2분마다 새 재난문자를 읽어, 정말 위급한 문자(전쟁·공습, 지진 등)면 가족 비상을 자동으로 선언한다.
+// 인증키 하나로 하루 1,000번까지만 부를 수 있어서, 남은 횟수를 자정까지 나눠 쓴다 (shouldCheck).
 //
 // 재난문자 단계: 위급재난(공습·경계경보 등, 가장 높음) > 긴급재난(지진, 호우·산불 대피 등) > 안전안내
 //   1급(경보음): 위급재난 전부, 긴급재난 중 지진·지진해일·민방공
@@ -14,6 +15,12 @@ export const SYSTEM_NAME = '정부 재난문자';
 
 // 이보다 오래된 문자로는 울리지 않는다 (서버가 한동안 멈췄다 다시 돌 때 지난 문자로 울리지 않게).
 export const MAX_AGE_MS = 30 * 60 * 1000;
+
+// 하루 호출 한도는 1,000번(한국 시각 자정에 새로 셈). 한 번 확인에 여러 쪽을 읽을 때를 위해 여유를 남긴다.
+export const DAILY_LIMIT = 1000;
+export const DAILY_BUDGET = 940;
+// 우리 지역에 긴급·위급 재난문자가 오고 나서 이 시간 동안은 (호출이 넉넉하면) 1분마다 본다. 여진·경보 격상에 대비.
+export const URGENT_MS = 60 * 60 * 1000;
 
 const CRITICAL_TYPES = ['지진', '지진해일', '민방공'];
 
@@ -128,6 +135,38 @@ export function pickHit(items, lastSn, now, settings) {
     if (!best || (hit.level === 'real' && best.level !== 'real') || (hit.level === best.level && hit.sn > best.sn)) best = hit;
   }
   return best;
+}
+
+/** 새 문자 중 우리 지역의 긴급·위급 재난문자가 있는가 (울리지 않는 문자라도 상황이 이어질 수 있다는 신호). */
+export function hasUrgentSignal(items, lastSn, now, settings) {
+  return items.some((m) => (Number(m.SN) || 0) > lastSn
+    && now - parseKst(m.CRT_DT) <= MAX_AGE_MS
+    && ['위급재난', '긴급재난'].includes(m.EMRG_STEP_NM)
+    && regionMatches(m.RCPTN_RGN_NM, settings.regions));
+}
+
+/** 한국 시각 자정까지 남은 분 */
+function minutesToMidnight(now) {
+  const day = 24 * 3600e3;
+  return (day - ((now + 9 * 3600e3) % day)) / 60e3;
+}
+
+/**
+ * 이번 분(알림 서버는 1분마다 깨어난다)에 재난문자를 확인할지 정한다.
+ * 오늘 남은 호출을 자정까지 고르게 나눈 간격(보통 1~2분)마다 확인하고, 급할 때(비상 중이거나 최근 긴급 문자)는
+ * 호출이 넉넉하면 1분마다 본다. 한도를 다 쓰면 자정까지 쉰다.
+ * @param state config/disasterFeed (callsDay, calls, lastCallAt)
+ * @returns {{check:boolean, used:number, every:number}} every: 지금 확인 간격(분)
+ */
+export function shouldCheck(state, now, urgent) {
+  const used = state?.callsDay === kstDate(now) ? Number(state.calls) || 0 : 0;
+  const left = DAILY_BUDGET - used;
+  if (left <= 0) return { check: false, used, every: 0 };
+  const pace = minutesToMidnight(now) / left;
+  const every = Math.max(1, Math.ceil((urgent && pace <= 2 ? 1 : pace) - 0.01));
+  const last = Date.parse(state?.lastCallAt || '');
+  const elapsed = Number.isFinite(last) ? (now - last) / 60e3 : Infinity;
+  return { check: elapsed + 0.1 >= every, used, every };
 }
 
 /** 최근 30분 안팎의 재난문자 목록. 키가 틀리거나 서비스가 멈추면 오류. */

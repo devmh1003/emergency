@@ -135,7 +135,8 @@ export function memberDetailView({ state, params, live, navigate }) {
   const progressBox = h('div');
   getProfile(uid).then((p) => {
     const age = ageFromBirth(p.birthDate);
-    profileBox.replaceChildren(
+    // replaceChildren 은 null 을 "null" 글자로 넣으므로 빈 칸은 뺀다.
+    profileBox.replaceChildren(...[
       fullAccess && p.loginId ? infoRow(t('로그인 아이디'), p.loginId) : null,
       infoRow(t('성별'), p.gender ? t(p.gender) : p.gender),
       infoRow(t('나이'), age != null ? t('{age}세 ({birth})', { age, birth: p.birthDate }) : p.birthDate),
@@ -143,7 +144,7 @@ export function memberDetailView({ state, params, live, navigate }) {
       infoRow(t('의료 메모'), p.medical),
       infoRow(t('비상연락처'), p.emergencyContact),
       infoRow(t('집주소'), p.address),
-      infoRow(t('이메일'), p.email));
+      infoRow(t('이메일'), p.email)].filter(Boolean));
   }).catch((err) => profileBox.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
 
   let historySection = null;

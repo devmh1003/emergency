@@ -1,10 +1,10 @@
 // 홈: 현재 상황, "나 무사해요" 생존신고, 바로가기, 가족 현황, 준비 상태, 현재 위치, 긴급 전화
 import { h, toast, busy, card, panel, alertBox, isIOS, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
-import { checkIn } from '../store.js';
+import { checkIn, notifyHelp } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
 import {
-  checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, smsHref,
+  checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, helpSmsBody, smsHref,
   emergencyLabel, emergencyLevel, levelActor, realStartedAt, meetingSchedule, checklistProgress, checklistKey,
 } from '../logic.js';
 import { t } from '../i18n.js';
@@ -29,6 +29,24 @@ async function report(state, type, note, knownPos) {
   else toast(pos ? t('{what} 전송 완료', { what }) : t('{what} 전송 완료 (위치 없이)', { what }));
   if (locError) toast(t('위치를 못 읽어 위치 없이 저장했습니다: {error}', { error: locError }), 'warn');
   return pos;
+}
+
+/**
+ * 도움 요청을 저장한 뒤: 관련 가족의 휴대폰에 알림을 보내고(알림 서버), 이어서 문자 앱을 연다.
+ * 문자는 휴대폰 통신망으로 가므로 상대가 인터넷이 안 될 때도 닿는다. 보내기는 본인이 한 번 누른다.
+ * 알림 서버에 닿지 않으면(오프라인) 이 휴대폰에 보이는 가족 번호로 문자만 연다.
+ */
+async function sendHelp(state, note, pos) {
+  const r = await notifyHelp();
+  const people = r.recipients?.length ? r.recipients : state.members.filter((m) => m.id !== state.me.id);
+  if (r.error) toast(t('가족 휴대폰 알림을 보내지 못했습니다: {error}. 문자로 알리세요.', { error: r.error }), 'warn');
+  else if (r.recipients?.length) toast(t('도움 요청 알림을 {n}명에게 보냈습니다.', { n: r.recipients.length }));
+  const phones = people.map((m) => m.phone).filter(Boolean);
+  if (!phones.length) {
+    toast(t('문자를 보낼 전화번호가 등록된 가족이 없습니다.'), 'warn');
+    return;
+  }
+  location.href = smsHref(phones, helpSmsBody(state.me.name, note, pos), isIOS);
 }
 
 function situation(state) {
@@ -105,12 +123,15 @@ export function homeView({ state, live, onChange }) {
   let lastPos = null;
   const note = h('input', { placeholder: t('메모 (선택) 예: 회사 지하 대피소에 있음'), maxlength: 300, 'aria-label': t('신고 메모') });
 
-  const run = (type, button) => busy(button, async () => {
+  const run = (type, button, after = null) => busy(button, async () => {
     const original = [...button.childNodes];
+    const text = note.value.trim();
     button.textContent = t('위치 확인 중…');
     try {
-      lastPos = await report(state, type, note.value.trim(), null) || lastPos;
+      const pos = await report(state, type, text, null);
+      lastPos = pos || lastPos;
       note.value = '';
+      if (after) await after(text, pos);
     } catch (err) {
       toast(errorMessage(err), 'error');
     } finally {
@@ -124,8 +145,8 @@ export function homeView({ state, live, onChange }) {
     class: 'btn btn-secondary btn-lg',
     onClick: async (e) => {
       const target = e.currentTarget;
-      if (!note.value.trim() && !(await ask(t('도움 요청으로 신고할까요? 메모에 상황을 적으면 가족이 더 빨리 도울 수 있습니다.')))) return;
-      run('help', target);
+      if (!note.value.trim() && !(await ask(t('도움 요청을 보낼까요? 관련 가족의 휴대폰에 내 위치와 함께 알림이 가고, 이어서 문자 앱이 열립니다. 메모에 상황을 적으면 더 빨리 도울 수 있습니다.')))) return;
+      run('help', target, (text, pos) => sendHelp(state, text, pos));
     },
   }, t('🆘 도움 요청'));
 

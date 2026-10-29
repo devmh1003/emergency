@@ -294,7 +294,7 @@ export const EN = {
 
   // ---- 정부 재난문자 자동 경보 (adminhub.js) ----
   '📡 정부 재난문자 자동 경보': '📡 Automatic alarm from government emergency alerts',
-  '행정안전부 긴급재난문자를 1분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.': 'Checks the Ministry of the Interior and Safety emergency alert texts every minute. When a top-level alert (air raid, missile warning) or an earthquake/tsunami alert is sent to our area, a Level 1 emergency is declared automatically and the siren sounds on every family phone.',
+  '행정안전부 긴급재난문자를 1~2분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.': 'Checks the Ministry of the Interior and Safety emergency alert texts every 1–2 minutes. When a top-level alert (air raid, missile warning) or an earthquake/tsunami alert is sent to our area, a Level 1 emergency is declared automatically and the siren sounds on every family phone.',
   '안전안내 문자, 훈련 안내, 해제 안내로는 울리지 않습니다. 이미 비상 중이면 새로 선언하지 않고, 해제는 관리자가 직접 합니다.': 'Safety notices, drill notices and all-clear messages do not trigger it. If an emergency is already active nothing new is declared, and an admin ends it by hand.',
   '알림 서버가 아직 재난문자를 확인하지 않았습니다. 재난문자 인증키를 알림 서버에 등록하면 1분 안에 시작합니다.': 'The notification server has not checked the alerts yet. It starts within a minute after the alert API key is registered on the notification server.',
   '재난문자를 받아 오지 못했습니다 ({time}): {error}': 'Could not fetch the alerts ({time}): {error}',
@@ -312,4 +312,18 @@ export const EN = {
   '그 밖의 긴급재난(호우·산불 대피 등)은 2급 알림으로 받기': 'Also send other emergency alerts (heavy rain, wildfire evacuation…) as a Level 2 notification',
   '{name} · {time} 저장': 'Saved by {name} · {time}',
   '상태를 불러오지 못했습니다.': 'Could not load the status.',
+  '조회는 하루 1,000번까지라 남은 횟수를 자정까지 나눠 씁니다. 우리 지역에 긴급 재난문자가 오거나 비상 중일 때는 1분마다 봅니다.': 'The alert service allows 1,000 lookups a day, so the remaining lookups are spread until midnight. After an emergency alert for our area, or during an emergency, it checks every minute.',
+  '오늘 재난문자 조회 {used}/{limit}회 · 지금 {every}분마다 확인': 'Lookups today: {used}/{limit} · now checking every {every} min',
+  '오늘 재난문자 조회 {used}/{limit}회': 'Lookups today: {used}/{limit}',
+  '오늘 재난문자 조회 한도를 다 써서 자정(한국 시각)까지 확인을 쉽니다. 마지막 확인: {time}': 'Today\'s lookup limit is used up, so checks pause until midnight (Korea time). Last check: {time}',
+  '잠긴 곳이 없습니다.': 'Nothing is locked.',
+  '기기': 'Phone',
+  '인터넷 주소': 'Internet address',
+  '{time}까지 잠김': 'locked until {time}',
+  '잠금을 풀었습니다.': 'Unlocked.',
+  '잠금 풀기': 'Unlock',
+  '🔒 접속 잠금': '🔒 Sign-in locks',
+  '같은 휴대폰이나 같은 인터넷(집 와이파이 등)에서 접속 코드를 3번 틀리면 하루 동안 새로 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로 씁니다. 가족이 실수로 잠겼다면 풀어 주세요.': 'After 3 wrong access codes from the same phone or the same internet connection (such as home Wi-Fi), new sign-ins are blocked for a day. Phones that are already signed in keep working. If a family member got locked out by mistake, unlock it here.',
+  '{n}번 틀림 (잠기지 않음)': '{n} wrong tries (not locked)',
+  '기록 지우기': 'Clear',
 };

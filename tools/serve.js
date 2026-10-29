@@ -2,6 +2,7 @@
 // EMULATOR=1 이면 config.js 대신 Firebase 에뮬레이터용 설정을 내보낸다 (실제 프로젝트 없이 화면 확인).
 //   npx firebase-tools emulators:start --only auth,firestore --project demo-family
 //   EMULATOR=1 node tools/serve.js
+//   접속 코드는 알림 서버가 확인하므로, 로그인까지 보려면 로컬 알림 서버도 띄우고 WORKER_URL 을 준다.
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
@@ -18,7 +19,8 @@ const emulatorConfig = `self.FAMILY_CONFIG = ${JSON.stringify({
   appName: '우리 가족 비상연락 (에뮬레이터)',
   firebase: { apiKey: 'demo-key', authDomain: 'demo-family.firebaseapp.com', projectId: 'demo-family', appId: 'demo' },
   vapidKey: '',
-  workerUrl: '',
+  // 로컬 알림 서버를 띄웠으면 WORKER_URL=http://localhost:8787 (접속 코드 확인에 필요)
+  workerUrl: process.env.WORKER_URL || '',
   useEmulators: true,
 })};`;
 

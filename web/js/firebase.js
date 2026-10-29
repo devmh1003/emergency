@@ -2,7 +2,7 @@
 import { initializeApp, deleteApp } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js';
 import {
   initializeAuth, indexedDBLocalPersistence, browserLocalPersistence, inMemoryPersistence,
-  connectAuthEmulator, onAuthStateChanged, signInWithEmailAndPassword, signOut,
+  connectAuthEmulator, onAuthStateChanged, signInWithEmailAndPassword, signInWithCustomToken, signOut,
   createUserWithEmailAndPassword,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js';
 import { t } from './i18n.js';
@@ -45,8 +45,9 @@ export function watchAuth(cb) {
 
 // ---------- 접속 코드 ----------
 // 접속 코드 3가지(가족·관리자·백업)는 각각 "관문 계정"의 비밀번호다.
-// 관문 계정으로 코드를 확인하면 이름 목록이 보이고, 이름을 고르면 그 사람 계정(무작위 열쇠)으로 로그인한다.
-// 계정 이메일은 메일이 오가지 않는 내부 주소다: g-family-xxxx@프로젝트.firebaseapp.com
+// 코드는 알림 서버가 확인한다(3번 틀리면 하루 동안 잠금). 맞으면 관문 계정으로 로그인해 이름 목록이 보이고,
+// 이름을 고르면 그 사람 계정(무작위 열쇠)으로 로그인한다.
+// 계정 이메일은 메일이 오가지 않는 내부 주소다: g-family-xxxx@프로젝트.firebaseapp.com (관문 계정 이메일은 공개하지 않는다)
 
 /** 추측할 수 없는 무작위 문자열 (영문 소문자 + 숫자) */
 export function randomToken(length = 24) {
@@ -64,8 +65,28 @@ export function signIn(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
 }
 
+export function signInWithToken(token) {
+  return signInWithCustomToken(auth, token);
+}
+
 export function logout() {
   return signOut(auth);
+}
+
+const DEVICE_KEY = 'family.deviceId';
+
+/** 이 기기의 무작위 id (접속 코드를 틀린 횟수를 기기마다 센다). 저장소를 못 쓰면 빈 값. */
+export function deviceId() {
+  try {
+    let id = localStorage.getItem(DEVICE_KEY);
+    if (!id) {
+      id = randomToken(24);
+      localStorage.setItem(DEVICE_KEY, id);
+    }
+    return id;
+  } catch {
+    return '';
+  }
 }
 
 /** 지금 로그인을 건드리지 않도록 잠깐 쓰는 별도 인스턴스에서 인증 작업을 한다. */
@@ -89,30 +110,22 @@ export function createAccount(email, password) {
   });
 }
 
-/** 이 이메일·비밀번호가 맞는지만 확인한다 (지금 로그인한 사람은 그대로). */
-export function credentialWorks(email, password) {
-  return withSecondaryAuth(async (a) => {
-    try {
-      await signInWithEmailAndPassword(a, email, password);
-      await signOut(a);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-}
-
-/** Cloudflare Worker 호출. 로그인한 사용자의 ID 토큰으로 본인임을 증명한다. */
-export async function callWorker(path, body = {}) {
+/**
+ * Cloudflare Worker 호출. 로그인한 사용자의 ID 토큰으로 본인임을 증명한다 (anonymous: 로그인 전 접속 코드 확인).
+ * 실패하면 오류에 status 와 서버가 보낸 값(data)을 붙인다.
+ */
+export async function callWorker(path, body = {}, { anonymous = false } = {}) {
   if (!config.workerUrl) throw new Error(t('알림 서버(Worker) 주소가 설정되지 않았습니다.'));
-  const token = await auth.currentUser.getIdToken();
-  const res = await fetch(config.workerUrl.replace(/\/$/, '') + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify(body),
-  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (!anonymous) headers.Authorization = `Bearer ${await auth.currentUser.getIdToken()}`;
+  let res;
+  try {
+    res = await fetch(config.workerUrl.replace(/\/$/, '') + path, { method: 'POST', headers, body: JSON.stringify(body) });
+  } catch {
+    throw Object.assign(new Error(t('인터넷 연결을 확인하세요.')), { code: 'auth/network-request-failed', status: 0 });
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || t('서버 오류 ({status})', { status: res.status }));
+  if (!res.ok) throw Object.assign(new Error(data.error || t('서버 오류 ({status})', { status: res.status })), { status: res.status, data });
   return data;
 }
 

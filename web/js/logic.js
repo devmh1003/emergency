@@ -266,6 +266,13 @@ export function safetySmsBody(name, pos, now = new Date()) {
   return t('[가족 비상연락] {name} 무사합니다. {time}{where}', { name, time: formatDateTime(now), where });
 }
 
+/** 도움 요청 문자 내용 (메모, 위치 지도 링크, 시각) */
+export function helpSmsBody(name, note, pos, now = new Date()) {
+  const where = hasLocation(pos) ? ` ${t('위치: {url}', { url: locationUrl(pos) })}` : ` ${t('(위치 확인 안 됨)')}`;
+  const what = note ? ` ${note}.` : '';
+  return t('[가족 비상연락] 🆘 {name} 도움 요청.{what} {time}{where}', { name, what, time: formatDateTime(now), where });
+}
+
 /** 체크리스트 진행률 */
 export function checklistProgress(protocols, done) {
   let total = 0;
@@ -451,6 +458,9 @@ const AUDIT_LABELS = {
   'notify.test': '테스트 알림 발송',
   'notify.drill': '테스트 알람 발송',
   'disaster.settings': '재난문자 자동 경보 설정',
+  'notify.help': '도움 요청 알림 발송',
+  'code.rekey': '접속 코드 사용자 모두 로그아웃',
+  'lock.clear': '접속 잠금 해제',
   'code.change': '접속 코드 변경',
   'backup.adminCode': '백업 코드로 관리자 코드 변경',
   'backup.adminAdd': '백업 코드로 관리자 추가',

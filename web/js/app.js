@@ -1,11 +1,11 @@
 // 앱 시작점: 로그인 상태 확인, 실시간 데이터 구독, 화면 전환, 머리말·메뉴·바닥글.
 import { isConfigured, watchAuth, config, logout } from './firebase.js';
-import { h, mount, toast, savedFontScale } from './dom.js';
+import { h, mount, toast, savedFontScale, ask } from './dom.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from './data/protocols.en.js';
 import { t, lang } from './i18n.js';
 import { maybeAutoPrepare, prepareOffline } from './offline.js';
-import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel } from './logic.js';
+import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel, toDate } from './logic.js';
 import * as store from './store.js';
 import { refreshPushToken } from './push.js';
 import { standbyWanted, startStandby } from './siren.js';
@@ -323,6 +323,34 @@ function onSubError(err) {
   }, 5000);
 }
 
+// ---------- 가족의 도움 요청 ----------
+// 사이트·앱을 보고 있을 때는 휴대폰 알림이 따로 뜨지 않으므로, 볼 수 있는 가족이 도움을 요청하면 바로 창을 띄운다.
+const HELP_FRESH_MS = 30 * 60 * 1000;
+const HELP_SEEN_KEY = 'family.helpSeen';
+let helpShowing = false;
+
+function helpSeen() {
+  try { return JSON.parse(localStorage.getItem(HELP_SEEN_KEY) || '[]'); } catch { return []; }
+}
+
+async function maybeHelpAlert() {
+  if (helpShowing || !state.me) return;
+  const seen = helpSeen();
+  const keyOf = (m) => `${m.id}:${toDate(m.last.clientAt || m.last.at)?.getTime() || 0}`;
+  const m = state.members.find((x) => x.id !== state.me.id && x.last?.type === 'help'
+    && Date.now() - (toDate(x.last.clientAt || x.last.at)?.getTime() || 0) < HELP_FRESH_MS
+    && !seen.includes(keyOf(x)));
+  if (!m) return;
+  try { localStorage.setItem(HELP_SEEN_KEY, JSON.stringify([...seen, keyOf(m)].slice(-20))); } catch { /* 무시 */ }
+  helpShowing = true;
+  try { navigator.vibrate?.([400, 200, 400, 200, 400]); } catch { /* 무시 */ }
+  const go = await ask(t('🆘 {name}님이 도움을 요청했습니다.{note}', { name: m.name, note: m.last.note ? ` "${m.last.note}"` : '' }),
+    { ok: t('위치 보기'), cancel: t('닫기'), danger: true });
+  helpShowing = false;
+  if (go) location.hash = `#/member/${encodeURIComponent(m.id)}`;
+  maybeHelpAlert();
+}
+
 function sortMembers(list) {
   return list.sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || a.name.localeCompare(b.name, 'ko'));
 }
@@ -349,6 +377,7 @@ function syncLinkSubscriptions() {
       else linkedDocs.delete(id);
       refreshLinkedMembers();
       notify();
+      maybeHelpAlert();
     }, (err) => {
       // 지정이 풀린 직후 등 권한이 없으면 조용히 뺀다.
       console.warn('지정된 가족을 읽을 수 없습니다', id, err.code);
@@ -409,6 +438,7 @@ function startDataSubscriptions() {
       state.members = sortMembers(list.filter((m) => m.gen === state.gates?.gen));
       state.legacyMembers = list.filter((m) => m.gen !== state.gates?.gen);
       notify();
+      maybeHelpAlert();
     }, onSubError));
   } else {
     syncLinkSubscriptions();

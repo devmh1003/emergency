@@ -24,7 +24,7 @@ export function fromDocument(doc) {
   return { id: doc.name.split('/').pop(), updateTime: doc.updateTime, ...fromFields(doc.fields) };
 }
 
-/** JS 값 → Firestore 값. 문자열, 숫자, 참/거짓, Date(타임스탬프), 문자열 목록, null. */
+/** JS 값 → Firestore 값. 문자열, 숫자, 참/거짓, Date(타임스탬프), 목록, 객체(맵), null. */
 export function toValue(v) {
   if (v == null) return { nullValue: null };
   if (v instanceof Date) return { timestampValue: v.toISOString().replace('.000Z', 'Z') };
@@ -32,6 +32,7 @@ export function toValue(v) {
   if (Number.isInteger(v)) return { integerValue: String(v) };
   if (typeof v === 'number') return { doubleValue: v };
   if (Array.isArray(v)) return { arrayValue: { values: v.map(toValue) } };
+  if (typeof v === 'object') return { mapValue: { fields: toFields(v) } };
   return { stringValue: String(v) };
 }
 
@@ -70,13 +71,14 @@ export class Firestore {
   /**
    * 여러 문서를 한 번에(모두 되거나 모두 안 되게) 쓴다.
    * writes: [{ path, data, mask?: 필드 목록(목록에 있는데 data 에 없으면 지운다), updateTime?, exists? }]
+   *         또는 문서를 지우려면 { path, delete: true }
    */
   async commit(writes) {
     const res = await this.request(':commit', {
       method: 'POST',
       body: JSON.stringify({
         writes: writes.map((w) => ({
-          update: { name: `${this.root}/${w.path}`, fields: toFields(w.data) },
+          ...(w.delete ? { delete: `${this.root}/${w.path}` } : { update: { name: `${this.root}/${w.path}`, fields: toFields(w.data) } }),
           ...(w.mask ? { updateMask: { fieldPaths: w.mask } } : {}),
           ...(w.updateTime ? { currentDocument: { updateTime: w.updateTime } }
             : w.exists === false ? { currentDocument: { exists: false } } : {}),

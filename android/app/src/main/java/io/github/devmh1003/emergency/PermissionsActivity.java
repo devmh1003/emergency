@@ -157,7 +157,10 @@ public class PermissionsActivity extends Activity {
         try {
             startActivity(intent);
         } catch (Exception e) {
-            open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
+            // 그 설정 화면이 없는 휴대폰이면 앱 정보 화면으로 (그것도 없으면 그냥 둔다)
+            try {
+                startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName())));
+            } catch (Exception ignored) { }
         }
     }
 

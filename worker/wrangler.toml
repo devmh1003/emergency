@@ -7,8 +7,10 @@ compatibility_date = "2024-09-23"
 workers_dev = true
 
 [vars]
-# 아래 세 값을 내 프로젝트에 맞게 바꾼다.
+# 아래 값들을 내 프로젝트에 맞게 바꾼다.
 FIREBASE_PROJECT_ID = "emergeny-404ab"
+# Firebase 웹 API 키: 사이트 web/js/config.js 의 apiKey 와 같은 공개 값 (비밀 아님). 접속 코드 확인에 쓴다.
+FIREBASE_API_KEY = "AIzaSyAJPVOGjrrYkKi0B5ckAl6AYE1woo4SvKM"
 ALLOWED_ORIGINS = "https://devmh1003.github.io"
 APP_URL = "https://devmh1003.github.io/emergency/"
 

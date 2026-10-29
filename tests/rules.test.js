@@ -388,12 +388,60 @@ test('체크리스트는 본인만 쓰고 관리자는 볼 수 있다', async ()
   await assertFails(getDoc(doc(as('kid'), 'checklists/mom')));
 });
 
-test('알림 토큰은 본인 것만 등록·조회한다', async () => {
-  await assertSucceeds(setDoc(doc(as('mom'), 'pushTokens/tok1'), { uid: 'mom', platform: 'x', at: serverTimestamp() }));
-  await assertFails(setDoc(doc(as('mom'), 'pushTokens/tok2'), { uid: 'kid', platform: 'x', at: serverTimestamp() }));
-  await assertSucceeds(getDoc(doc(as('mom'), 'pushTokens/tok1')));
-  await assertFails(getDoc(doc(as('kid'), 'pushTokens/tok1')));
+test('알림 토큰은 본인 칸 3개에만 등록하고 본인 것만 조회한다 (토큰을 잔뜩 만들어 발송을 막지 못하게)', async () => {
+  const tok = (uid, extra = {}) => ({ uid, token: 'fcm-abc', platform: 'x', at: serverTimestamp(), ...extra });
+  await assertSucceeds(setDoc(doc(as('mom'), 'pushTokens/mom_0'), tok('mom')));
+  await assertSucceeds(setDoc(doc(as('mom'), 'pushTokens/mom_2'), tok('mom')));
+  await assertFails(setDoc(doc(as('mom'), 'pushTokens/mom_3'), tok('mom')));
+  await assertFails(setDoc(doc(as('mom'), 'pushTokens/!0001'), tok('mom')));
+  await assertFails(setDoc(doc(as('mom'), 'pushTokens/kid_0'), tok('kid')));
+  await assertFails(setDoc(doc(as('mom'), 'pushTokens/mom_1'), tok('mom', { token: 5 })));
+  await assertSucceeds(getDoc(doc(as('mom'), 'pushTokens/mom_0')));
+  await assertFails(getDoc(doc(as('kid'), 'pushTokens/mom_0')));
   await assertFails(getDocs(collection(as('admin'), 'pushTokens')));
+  await assertSucceeds(getDocs(query(collection(as('mom'), 'pushTokens'), where('uid', '==', 'mom'))));
+  // 예전 방식 문서(id 가 토큰)는 본인이 지울 수 있다
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'pushTokens/old-token'), { uid: 'mom', platform: 'x', at: Timestamp.now() }));
+  await assertFails(deleteDoc(doc(as('kid'), 'pushTokens/old-token')));
+  await assertSucceeds(deleteDoc(doc(as('mom'), 'pushTokens/old-token')));
+});
+
+test('신고 시각은 꾸밀 수 없다: 마지막 신고는 서버 시각, 휴대폰 시각은 미래가 될 수 없다', async () => {
+  const future = Timestamp.fromMillis(Date.now() + 3600e3);
+  const past = Timestamp.fromMillis(Date.now() - 3 * 3600e3);
+  await assertFails(checkinBatch(as('kid'), 'kid', '아이', { clientAt: future }).commit());
+  // 오프라인에서 눌렀다가 나중에 올라온 신고(과거 휴대폰 시각)는 괜찮다
+  await assertSucceeds(checkinBatch(as('kid'), 'kid', '아이', { clientAt: past }).commit());
+  await assertFails(updateDoc(doc(as('kid'), 'members/kid'), {
+    last: { type: 'safe', lat: null, lng: null, note: '', at: Timestamp.fromMillis(Date.now() + 60e3), clientAt: Timestamp.now() },
+  }));
+  await assertFails(updateDoc(doc(as('kid'), 'members/kid'), {
+    last: { type: 'safe', lat: null, lng: null, note: '', at: serverTimestamp(), clientAt: future },
+  }));
+  await assertFails(setDoc(doc(as('kid'), 'meetingLogs/f1'), {
+    rank: 1, uid: 'kid', name: '아이', message: '맨 위 고정', at: serverTimestamp(), clientAt: future,
+  }));
+  await assertSucceeds(setDoc(doc(as('kid'), 'meetingLogs/f2'), {
+    rank: 1, uid: 'kid', name: '아이', message: '도착', at: serverTimestamp(), clientAt: past,
+  }));
+});
+
+test('접속 코드 잠금과 도움 요청 발송 표시는 알림 서버만 쓰고, 잠금은 관리자가 보고 풀 수 있다', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'loginLocks/ip-1'), { kind: 'ip', fails: 3, lockedUntil: Timestamp.now() }));
+  await assertFails(setDoc(doc(as('admin'), 'loginLocks/ip-2'), { kind: 'ip', fails: 0 }));
+  await assertFails(setDoc(doc(anon(), 'loginLocks/ip-1'), { fails: 0 }));
+  await assertFails(getDoc(doc(as('mom'), 'loginLocks/ip-1')));
+  await assertFails(deleteDoc(doc(as('mom'), 'loginLocks/ip-1')));
+  await assertSucceeds(getDocs(collection(as('admin'), 'loginLocks')));
+  await assertSucceeds(deleteDoc(doc(as('admin'), 'loginLocks/ip-1')));
+  await assertFails(setDoc(doc(as('mom'), 'helpAlerts/mom'), { sentAt: Timestamp.now() }));
+  await assertSucceeds(getDoc(doc(as('admin'), 'helpAlerts/mom')));
+});
+
+test('관문 계정 이메일은 공개 문서에 없어도 되고, 코드를 바꿀 때도 uid만 바꾼다', async () => {
+  const change = (who, data) => setDoc(doc(as(who), 'public/gates'), { ...data, at: serverTimestamp() }, { merge: true });
+  await assertSucceeds(change('admin', { familyUid: 'gate-f3' }));
+  await assertSucceeds(getDoc(doc(anon(), 'public/gates')));
 });
 
 // ---------- 초기 설정 ----------
@@ -459,6 +507,9 @@ test('백업 코드로는 관리자 코드 교체와 관리자 추가만 할 수
   await assertFails(setDoc(doc(gb, 'members/newkid'), member('새 가족')));
   await assertSucceeds(setDoc(doc(gb, 'access/admin'), { people: [] }));
   await assertFails(setDoc(doc(gb, 'access/family'), { people: [] }));
+  // 관리자를 추가하려면 관리자 목록을 읽어야 한다 (가족 목록은 못 본다)
+  await assertSucceeds(getDoc(doc(gb, 'access/admin')));
+  await assertFails(getDoc(doc(gb, 'access/family')));
   await assertFails(getDocs(collection(gb, 'members')));
   await assertFails(getDoc(doc(gb, 'profiles/mom')));
   await assertSucceeds(setDoc(doc(gb, 'auditLog/b1'), { action: 'backup.adminCode', detail: '', by: 'gate-b', byName: '백업 코드', at: serverTimestamp() }));

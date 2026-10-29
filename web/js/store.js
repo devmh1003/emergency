@@ -4,7 +4,7 @@ import {
   writeBatch, serverTimestamp, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 import {
-  db, auth, callWorker, createAccount, credentialWorks, newAccountEmail, randomToken, signIn, logout,
+  db, auth, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
 } from './firebase.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
 import { t } from './i18n.js';
@@ -93,6 +93,19 @@ export function checkIn(me, type, pos, note = '', emergency = null) {
     updatedAt: serverTimestamp(),
   });
   return commitWithTimeout(batch.commit());
+}
+
+/**
+ * 도움 요청 신고를 저장한 뒤 부른다: 알림 서버가 관련 가족(관리자, 나를 볼 수 있는 가족, 내가 볼 수 있는 가족)의
+ * 휴대폰에 위치와 메모를 알리고, 문자 보낼 번호를 돌려준다. 실패해도 신고는 이미 저장됐다.
+ * @returns {Promise<{sent?:number, recipients?:{name:string, phone:string}[], error?:string}>}
+ */
+export async function notifyHelp() {
+  try {
+    return await callWorker('/help');
+  } catch (err) {
+    return { error: err.message };
+  }
 }
 
 // ---------- 비상선언 ----------
@@ -291,21 +304,23 @@ async function accessUpdate(batch, kind, uid, entry) {
   batch.set(ref('access', kind), { people, updatedAt: serverTimestamp() });
 }
 
-/** 접속 코드로 관문 계정에 로그인한다. 어느 코드였는지 돌려준다: 'family' | 'admin' | 'backup' */
+/**
+ * 접속 코드로 관문 계정에 로그인한다. 어느 코드였는지 돌려준다: 'family' | 'admin' | 'backup'
+ * 코드는 알림 서버가 확인한다. 같은 인터넷 주소나 기기에서 3번 틀리면 하루 동안 막힌다.
+ * 틀리면 err.left(남은 횟수), 막혔으면 err.lockedUntil(풀리는 시각)이 붙는다.
+ */
 export async function loginWithCode(code) {
-  const gates = await getGates();
-  if (!gates) throw new Error(t('아직 초기 설정이 안 됐습니다.'));
-  let lastErr = null;
-  for (const kind of ['family', 'admin', 'backup']) {
-    try {
-      await signIn(gates[`${kind}Email`], code);
-      return kind;
-    } catch (err) {
-      lastErr = err;
-      if (err.code === 'auth/too-many-requests' || err.code === 'auth/network-request-failed') break;
-    }
+  let r;
+  try {
+    r = await callWorker('/login', { code, device: deviceId() }, { anonymous: true });
+  } catch (err) {
+    if (err.status === 401) throw Object.assign(new Error(t('접속 코드가 맞지 않습니다.')), { left: err.data?.left });
+    if (err.status === 429 && err.data?.lockedUntil) throw Object.assign(new Error(err.message), { lockedUntil: new Date(err.data.lockedUntil) });
+    if (err.status === 409) throw new Error(t('아직 초기 설정이 안 됐습니다.'));
+    throw err;
   }
-  throw lastErr;
+  await signInWithToken(r.token);
+  return r.kind;
 }
 
 /** 이름을 고르면 관문 계정에서 그 사람 계정으로 바꿔 로그인한다. */
@@ -314,12 +329,9 @@ export async function loginAsPerson(person) {
   await signIn(person.email, person.key);
 }
 
-/** 지금 관문 계정 중 이 코드로 열리는 것이 있는지 (코드끼리 겹치지 않게) */
-async function codeInUse(gates, code, except) {
-  for (const kind of ['family', 'admin', 'backup']) {
-    if (kind !== except && await credentialWorks(gates[`${kind}Email`], code)) return kind;
-  }
-  return null;
+/** 다른 관문 계정 중 이 코드로 열리는 것이 있는지 (코드끼리 겹치지 않게). 알림 서버가 확인한다. */
+async function codeInUse(code, except) {
+  return (await callWorker('/code/check', { code, except })).inUse;
 }
 
 let setupRunning = null;
@@ -354,11 +366,12 @@ async function runSetup({ name, phone, family, admin, backup }) {
     name, phone, role: 'admin', active: true, declareCredits: 1, order: 0, last: null, gen,
     createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
   });
+  // 관문 계정 이메일은 공개 문서에 적지 않는다 (알림 서버가 uid로 찾아 코드를 확인한다).
   batch.set(ref('public', 'gates'), {
     gen,
-    familyEmail: gate.family.email, familyUid: gate.family.uid,
-    adminEmail: gate.admin.email, adminUid: gate.admin.uid,
-    backupEmail: gate.backup.email, backupUid: gate.backup.uid,
+    familyUid: gate.family.uid,
+    adminUid: gate.admin.uid,
+    backupUid: gate.backup.uid,
     setupBy: person.uid, at: serverTimestamp(),
   });
   batch.set(ref('access', 'admin'), { people: [person], updatedAt: serverTimestamp() });
@@ -375,15 +388,15 @@ async function runSetup({ name, phone, family, admin, backup }) {
 /**
  * 접속 코드 바꾸기: 새 관문 계정을 만들어 바꿔 끼운다 (예전 코드를 몰라도 된다).
  * 관리자는 세 코드 모두, 백업 코드로 들어온 사람은 관리자 코드만 바꿀 수 있다 (규칙이 막는다).
+ * 새 관문 계정의 이메일은 어디에도 적지 않는다.
  */
 export async function changeAccessCode(kind, code) {
   const gates = await getGates();
-  const clash = await codeInUse(gates, code, kind);
+  const clash = await codeInUse(code, kind);
   if (clash) throw new Error(t('다른 접속 코드와 같습니다. 다른 코드를 쓰세요.'));
-  const email = newAccountEmail(`g-${kind}`);
-  const uid = await createAccount(email, code);
+  const uid = await createAccount(newAccountEmail(`g-${kind}`), code);
   const batch = writeBatch(db);
-  batch.set(ref('public', 'gates'), { [`${kind}Email`]: email, [`${kind}Uid`]: uid, at: serverTimestamp() }, { merge: true });
+  batch.set(ref('public', 'gates'), { [`${kind}Uid`]: uid, at: serverTimestamp() }, { merge: true });
   if (auth.currentUser?.uid === gates.backupUid) {
     batch.set(doc(collection(db, 'auditLog')), {
       action: 'backup.adminCode', detail: '백업 코드로 관리자 코드를 바꿈', by: auth.currentUser.uid, byName: '백업 코드', at: serverTimestamp(),
@@ -391,6 +404,27 @@ export async function changeAccessCode(kind, code) {
   } else {
     addAudit(batch, 'code.change', { targetName: kind, detail: `${kind} 코드 변경` });
   }
+  await batch.commit();
+}
+
+/**
+ * 코드가 새어 나갔을 때: 그 코드로 들어오는 사람들(가족 또는 관리자)의 로그인 열쇠를 모두 바꾼다.
+ * 예전 열쇠로 들어와 있던 기기는 모두 로그아웃되고, 새 코드로 다시 들어와 이름을 고른다.
+ * 나도 그 목록에 있으면 새 열쇠로 바로 다시 로그인한다.
+ */
+export async function rekeyAccess(kind) {
+  const r = await callWorker('/admin/rekey', { kind });
+  if (r.self) await signIn(r.self.email, r.self.key);
+  return r;
+}
+
+/** 접속 코드를 3번 틀려 잠긴 기기·인터넷 주소 (관리자) */
+export const watchLoginLocks = (cb, onError) => watchCollection('loginLocks', cb, onError);
+
+export async function clearLoginLock(lock) {
+  const batch = writeBatch(db);
+  batch.delete(ref('loginLocks', lock.id));
+  addAudit(batch, 'lock.clear', { targetName: lock.label || '', detail: lock.kind === 'device' ? '기기 잠금 해제' : '인터넷 주소 잠금 해제' });
   await batch.commit();
 }
 
@@ -629,14 +663,36 @@ export async function deleteContact(id, name) {
 
 // ---------- 알림 토큰 ----------
 
-export function savePushToken(uid, token) {
-  return setDoc(ref('pushTokens', token), {
+// 사람마다 기기 3칸(pushTokens/{uid}_0~2). 같은 기기는 같은 칸을 다시 쓰고, 칸이 다 차면 가장 오래된 칸을 쓴다.
+const TOKEN_SLOTS = 3;
+
+async function myTokenDocs(uid) {
+  const snap = await getDocs(query(collection(db, 'pushTokens'), where('uid', '==', uid)));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function savePushToken(uid, token) {
+  const mine = await myTokenDocs(uid).catch(() => []);
+  const slots = Array.from({ length: TOKEN_SLOTS }, (_, i) => `${uid}_${i}`);
+  const same = mine.find((d) => slots.includes(d.id) && d.token === token);
+  const free = slots.find((id) => !mine.some((d) => d.id === id));
+  const oldest = mine.filter((d) => slots.includes(d.id))
+    .sort((a, b) => (a.at?.toMillis?.() || 0) - (b.at?.toMillis?.() || 0))[0];
+  const id = same?.id || free || oldest?.id || slots[0];
+  await setDoc(ref('pushTokens', id), {
     uid,
+    token,
     platform: navigator.userAgent.slice(0, 200),
     at: serverTimestamp(),
   });
+  // 예전 방식 문서(id 가 토큰)는 정리한다
+  await Promise.all(mine.filter((d) => !slots.includes(d.id)).map((d) => deleteDoc(ref('pushTokens', d.id)).catch(() => {})));
 }
 
-export function deletePushToken(token) {
-  return deleteDoc(ref('pushTokens', token));
+/** 이 기기 토큰을 지운다 (로그아웃할 때). */
+export async function deletePushToken(token) {
+  const uid = auth.currentUser?.uid;
+  const mine = uid ? await myTokenDocs(uid).catch(() => []) : [];
+  const ids = new Set([token, ...mine.filter((d) => d.token === token || d.id === token).map((d) => d.id)]);
+  await Promise.all([...ids].map((id) => deleteDoc(ref('pushTokens', id)).catch(() => {})));
 }

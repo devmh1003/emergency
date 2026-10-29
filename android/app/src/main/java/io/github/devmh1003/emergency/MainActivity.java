@@ -3,6 +3,7 @@ package io.github.devmh1003.emergency;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
@@ -34,6 +35,8 @@ public class MainActivity extends Activity {
     static final String SITE = "https://devmh1003.github.io/emergency/";
     private static final String EXTRA_ACK = "ack";
     private static final String PREF_PERMS_SHOWN = "permsShown";
+    private static final String PREF_PERMS_REMINDED = "permsRemindedAt";
+    private static final long REMIND_EVERY_MS = 24L * 3600 * 1000;
     private static final int REQ_LOCATION = 11;
 
     private static MainActivity current;
@@ -99,7 +102,16 @@ public class MainActivity extends Activity {
                 } else {
                     geoOrigin = origin;
                     geoCallback = callback;
-                    requestPermissions(new String[] {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION);
+                    // 권한을 묻기 전에 무엇에 쓰는지 먼저 알린다 (구글 플레이 정책: 눈에 띄는 공개)
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("위치 사용 안내")
+                            .setMessage("생존신고·도움 요청을 누를 때 지금 위치를 가족에게 보내고, 집합장소까지 거리와 방향을 계산하는 데 씁니다. "
+                                    + "앱을 쓰고 있을 때만 쓰며, 계속 따라다니며 기록하지 않습니다.")
+                            .setPositiveButton("계속", (d, w) -> requestPermissions(
+                                    new String[] {Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, REQ_LOCATION))
+                            .setNegativeButton("나중에", (d, w) -> denyLocation())
+                            .setOnCancelListener(d -> denyLocation())
+                            .show();
                 }
             }
         });
@@ -144,6 +156,23 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         foreground = true;
+        remindPermissions();
+    }
+
+    /** 알림이나 전체 화면 경보가 꺼져 있으면 하루 한 번 권한 화면을 다시 연다 (꺼져 있으면 1급 경보가 잠금 화면에 뜨지 않는다). */
+    private void remindPermissions() {
+        android.content.SharedPreferences prefs = getSharedPreferences(PushService.PREFS, MODE_PRIVATE);
+        if (!prefs.getBoolean(PREF_PERMS_SHOWN, false)) return;
+        if (PermissionsActivity.notifications(this) && Alarms.canFullScreen(this)) return;
+        long now = System.currentTimeMillis();
+        if (now - prefs.getLong(PREF_PERMS_REMINDED, 0) < REMIND_EVERY_MS) return;
+        prefs.edit().putLong(PREF_PERMS_REMINDED, now).apply();
+        startActivity(new Intent(this, PermissionsActivity.class));
+    }
+
+    private void denyLocation() {
+        if (geoCallback != null) geoCallback.invoke(geoOrigin, false, false);
+        geoCallback = null;
     }
 
     @Override

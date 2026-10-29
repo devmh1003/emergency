@@ -1,10 +1,13 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
-import { fromDocument } from '../src/firestore.js';
-import worker, { notificationKey, notificationContent, pickTokens, pushMessage, alarmAck, checkDisasterMessages } from '../src/index.js';
+import { fromDocument, toFields } from '../src/firestore.js';
+import worker, {
+  notificationKey, notificationContent, pickTokens, pushMessage, alarmAck, checkDisasterMessages, helpRecipients, helpContent,
+} from '../src/index.js';
+import { countAttempt, lockedUntil, maskIp } from '../src/login.js';
 import {
-  classifyMessage, disasterSettings, regionMatches, pickHit, parseKst, kstDate, fetchDisasterMessages,
+  classifyMessage, disasterSettings, regionMatches, pickHit, parseKst, kstDate, fetchDisasterMessages, shouldCheck, DAILY_BUDGET,
 } from '../src/disaster.js';
 
 const PROJECT = 'demo-family';
@@ -132,6 +135,13 @@ beforeEach(async () => {
     if (url === 'https://oauth2.googleapis.com/token') return ok({ access_token: 'at', expires_in: 3600 });
     if (url.startsWith('https://fcm.googleapis.com/')) return ok({ name: 'sent' });
     if (url.startsWith('https://identitytoolkit.googleapis.com/')) return ok({});
+    if (url.endsWith('/documents:batchGet')) {
+      return ok(JSON.parse(init.body).documents.map((name) => {
+        const path = name.split('/documents/')[1];
+        return db[path] ? { found: fsDoc(path, db[path]) } : { missing: name };
+      }));
+    }
+    if (url.endsWith('/documents:commit')) return ok({});
     const m = /documents\/([^?]+)/.exec(url);
     if (m) {
       const path = decodeURIComponent(m[1]);
@@ -360,7 +370,7 @@ test('재난문자 조회: 키가 틀리면 오류, 많으면 마지막 쪽까�
 });
 
 function disasterFetch({ emergency = null, settings = null, feed = null, items = [], commitOk = true } = {}) {
-  const docs = { 'config/disasterAlerts': settings, 'config/disasterFeed': feed, 'emergency/current': emergency };
+  const docs = { 'config/disasterAlerts': settings, 'config/disasterFeed': feed, 'emergency/current': emergency, 'public/gates': { gen: 5 } };
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, method: init.method || 'GET', body: init.body });
@@ -375,7 +385,7 @@ function disasterFetch({ emergency = null, settings = null, feed = null, items =
       }));
     }
     if (url.endsWith('/documents:commit')) return commitOk ? ok({}) : new Response('{}', { status: 409 });
-    if (url.includes('/documents/members')) return ok({ documents: [fsDoc('members/user-1', { active: true })] });
+    if (url.includes('/documents/members')) return ok({ documents: [fsDoc('members/user-1', { active: true, gen: 5 })] });
     if (url.includes('/documents/pushTokens')) {
       return ok({ documents: [fsDoc('pushTokens/tok-a', { uid: 'user-1', platform: 'Android FamilyEmergencyApp/1.1' })] });
     }
@@ -455,4 +465,302 @@ test('그 사이 비상 문서가 바뀌면 이번 문자를 다음 확인 때 �
   assert.equal(fcmCalls().length, 0);
   const state = commits().at(-1)[0].update.fields;
   assert.equal(state.lastSn.integerValue, '400');
+});
+
+test('하루 호출 한도: 남은 횟수를 자정까지 나눠 1~2분마다, 급할 때는 1분마다, 한도를 넘지 않는다', () => {
+  const midnight = parseKst('2026/10/29 00:00:00');
+  const day = kstDate(midnight);
+  // 자정 직후: 1440분 / 940번 → 2분마다
+  assert.equal(shouldCheck({ callsDay: day, calls: 0, lastCallAt: new Date(midnight - 60e3).toISOString() }, midnight, false).check, false);
+  assert.equal(shouldCheck({ callsDay: day, calls: 0, lastCallAt: new Date(midnight - 120e3).toISOString() }, midnight, false).every, 2);
+  assert.equal(shouldCheck({ callsDay: day, calls: 0, lastCallAt: new Date(midnight - 60e3).toISOString() }, midnight, true).check, true);
+  assert.deepEqual(shouldCheck({ callsDay: day, calls: DAILY_BUDGET }, midnight + 3600e3, true), { check: false, used: DAILY_BUDGET, every: 0 });
+  // 날짜가 바뀌면 새로 센다
+  assert.equal(shouldCheck({ callsDay: '20261028', calls: DAILY_BUDGET }, midnight, false).used, 0);
+
+  // 하루를 1분씩 흘려 본다: 평소에도, 하루 종일 급해도 한도 안이고, 확인 간격은 2분을 넘지 않는다.
+  for (const urgent of [false, true]) {
+    let state = null;
+    let gap = 0;
+    let maxGap = 0;
+    for (let i = 0; i < 1440; i++) {
+      const now = midnight + i * 60e3;
+      const plan = shouldCheck(state, now, urgent);
+      gap++;
+      if (plan.check) {
+        maxGap = Math.max(maxGap, gap);
+        gap = 0;
+        state = { callsDay: kstDate(now), calls: plan.used + 1, lastCallAt: new Date(now).toISOString() };
+      }
+    }
+    assert.ok(state.calls <= DAILY_BUDGET, `${urgent}: ${state.calls}`);
+    assert.ok(state.calls >= 700, `${urgent}: ${state.calls}`);
+    assert.ok(maxGap <= 2, `${urgent}: ${maxGap}`);
+  }
+});
+
+test('확인할 차례가 아니면 재난문자를 부르지 않고, 확인하면 오늘 쓴 호출 수를 남긴다', async () => {
+  const now = NOON + 60e3;
+  disasterFetch({ items: [msg({ SN: 500 })], feed: { lastSn: 400, callsDay: kstDate(now), calls: 900, lastCallAt: new Date(now - 60e3).toISOString() } });
+  assert.equal((await checkDisasterMessages(denv, now)).skipped, '쉬는 차례');
+  assert.equal(calls.some((c) => c.url.includes('safetydata')), false);
+
+  calls = [];
+  disasterFetch({ items: [msg({ SN: 300, EMRG_STEP_NM: '안전안내' })], feed: { lastSn: 200, callsDay: kstDate(now), calls: 12 } });
+  await checkDisasterMessages(denv, now);
+  const f = commits().at(-1)[0].update.fields;
+  assert.equal(f.calls.integerValue, '13');
+  assert.equal(f.callsDay.stringValue, '20261029');
+  assert.equal(f.every.integerValue, '1');
+  assert.equal('urgentAt' in f, false);
+});
+
+// ---------- 접속 코드 확인과 잠금 ----------
+
+/** 메모리 Firestore + Firebase 인증(관리자 API, 비밀번호 로그인) 흉내 */
+function memoryFetch(store, { passwords = {}, accounts = {}, authDown = false } = {}) {
+  let tick = 0;
+  const stamp = () => `2026-10-29T00:00:${String(++tick).padStart(2, '0')}Z`;
+  const doc = (path) => ({ name: `projects/${PROJECT}/databases/(default)/documents/${path}`, updateTime: store[path].updateTime, fields: toFields(store[path].data) });
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, method: init.method || 'GET', body: init.body });
+    const ok = (data) => new Response(JSON.stringify(data), { status: 200 });
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (url === 'https://oauth2.googleapis.com/token') return ok({ access_token: 'at', expires_in: 3600 });
+    if (url.startsWith('https://fcm.googleapis.com/')) return ok({ name: 'sent' });
+    if (url.endsWith('/accounts:lookup')) return ok({ users: body.localId.filter((id) => accounts[id]).map((id) => ({ localId: id, email: accounts[id] })) });
+    if (url.endsWith('/accounts:delete')) {
+      delete accounts[body.localId];
+      return ok({});
+    }
+    if (url.endsWith('/accounts:update')) {
+      if (body.email) {
+        passwords[body.email] = passwords[accounts[body.localId]];
+        accounts[body.localId] = body.email;
+      }
+      if (body.password) passwords[accounts[body.localId]] = body.password;
+      return ok({});
+    }
+    if (url.includes('accounts:signInWithPassword')) {
+      if (authDown) return new Response(JSON.stringify({ error: { message: 'TOO_MANY_ATTEMPTS_TRY_LATER' } }), { status: 400 });
+      return passwords[body.email] && passwords[body.email] === body.password
+        ? ok({}) : new Response(JSON.stringify({ error: { message: 'INVALID_LOGIN_CREDENTIALS' } }), { status: 400 });
+    }
+    if (url.endsWith('/documents:batchGet')) {
+      return ok(body.documents.map((name) => {
+        const path = name.split('/documents/')[1];
+        return store[path] ? { found: doc(path) } : { missing: name };
+      }));
+    }
+    if (url.endsWith('/documents:commit')) {
+      for (const w of body.writes) {
+        const path = (w.update?.name || w.delete).split('/documents/')[1];
+        const cur = store[path];
+        if (w.currentDocument?.exists === false && cur) return new Response('{}', { status: 409 });
+        if (w.currentDocument?.updateTime && cur?.updateTime !== w.currentDocument.updateTime) return new Response('{}', { status: 409 });
+      }
+      for (const w of body.writes) {
+        const path = (w.update?.name || w.delete).split('/documents/')[1];
+        if (w.delete) { delete store[path]; continue; }
+        const data = fromDocument({ name: w.update.name, fields: w.update.fields });
+        delete data.id;
+        delete data.updateTime;
+        let next = data;
+        if (w.updateMask) {
+          next = { ...(store[path]?.data || {}) };
+          for (const f of w.updateMask.fieldPaths) { if (f in data) next[f] = data[f]; else delete next[f]; }
+        }
+        store[path] = { data: next, updateTime: stamp() };
+      }
+      return ok({});
+    }
+    const m = /documents\/([^?]+)/.exec(url);
+    if (m) {
+      const path = decodeURIComponent(m[1]);
+      if (init.method === 'POST') return ok({});
+      const docs = Object.keys(store).filter((k) => k.startsWith(`${path}/`) && !k.slice(path.length + 1).includes('/'));
+      if (store[path]) return ok(doc(path));
+      if (!path.includes('/')) return ok({ documents: docs.map(doc) });
+      return new Response('{}', { status: 404 });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+}
+
+const lenv = { ...env, FIREBASE_API_KEY: 'web-key' };
+async function login(code, { ip = '1.2.3.4', device = 'device0000000000abcd' } = {}) {
+  const headers = { Origin: ORIGIN, 'Content-Type': 'application/json', 'CF-Connecting-IP': ip };
+  const res = await worker.fetch(new Request('https://w.example/login', { method: 'POST', headers, body: JSON.stringify({ code, device }) }), lenv);
+  return { status: res.status, data: await res.json() };
+}
+
+async function lpost(path, token, body = {}) {
+  const headers = { Origin: ORIGIN, 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+  const res = await worker.fetch(new Request(`https://w.example${path}`, { method: 'POST', headers, body: JSON.stringify(body) }), lenv);
+  return { status: res.status, data: await res.json() };
+}
+
+function gateStore(extra = {}) {
+  return {
+    'public/gates': { data: { gen: 5, familyUid: 'gate-f', adminUid: 'gate-a', backupUid: 'gate-b', ...extra }, updateTime: 'u0' },
+  };
+}
+
+test('접속 코드 잠금 규칙: 3번째 실패에 하루 잠그고, 하루가 지나면 새로 센다', () => {
+  const key = { kind: 'ip', label: '1.2.*.*' };
+  const now = Date.parse('2026-10-29T03:00:00Z');
+  const save = (d) => ({ ...d, firstFailAt: d.firstFailAt.toISOString(), lockedUntil: d.lockedUntil?.toISOString() ?? null });
+  let d = countAttempt(null, key, now);
+  assert.equal(d.fails, 1);
+  d = countAttempt(save(d), key, now + 1000);
+  d = countAttempt(save(d), key, now + 2000);
+  assert.equal(d.fails, 3);
+  assert.equal(d.lockedUntil.getTime(), now + 2000 + 24 * 3600e3);
+  assert.ok(lockedUntil(save(d), now + 3600e3));
+  assert.equal(lockedUntil(save(d), now + 25 * 3600e3), 0);
+  assert.equal(countAttempt(save(d), key, now + 25 * 3600e3).fails, 1);
+  assert.equal(maskIp('211.234.5.6'), '211.234.*.*');
+});
+
+test('접속 코드를 3번 틀리면 하루 동안 막고, 맞는 코드도 받지 않는다. 다른 곳에서는 맞는 코드로 들어온다', async () => {
+  const store = gateStore();
+  const accounts = { 'gate-f': 'gf@x', 'gate-a': 'ga@x', 'gate-b': 'gb@x' };
+  memoryFetch(store, { accounts, passwords: { 'gf@x': 'family-123', 'ga@x': 'admin-1234', 'gb@x': 'backup-123' } });
+  const first = await login('nope-1');
+  assert.deepEqual([first.status, first.data.left], [401, 2]);
+  assert.equal((await login('nope-2')).data.left, 1);
+  const third = await login('nope-3');
+  assert.equal(third.status, 429);
+  assert.ok(Date.parse(third.data.lockedUntil) > Date.now() + 23 * 3600e3);
+  assert.equal((await login('family-123')).status, 429);
+  // 같은 기기는 인터넷 주소를 바꿔도 막힌다
+  assert.equal((await login('family-123', { ip: '9.9.9.9' })).status, 429);
+  const other = await login('admin-1234', { ip: '9.9.9.9', device: 'otherdevice000000000' });
+  assert.equal(other.status, 200);
+  assert.equal(other.data.kind, 'admin');
+  const claims = JSON.parse(Buffer.from(other.data.token.split('.')[1], 'base64url'));
+  assert.equal(claims.uid, 'gate-a');
+  assert.match(claims.aud, /identitytoolkit/);
+  // 1.2.3.4 주소와 첫 기기의 잠금만 남는다 (맞힌 곳의 기록은 지워진다)
+  assert.equal(Object.keys(store).filter((k) => k.startsWith('loginLocks/')).length, 2);
+});
+
+test('예전 공개 문서의 관문 이메일은 바꿔서 지우고, 인증 서버가 잠시 막히면 실패로 세지 않는다', async () => {
+  const store = gateStore({ familyEmail: 'gf@x', adminEmail: 'ga@x', backupEmail: 'gb@x' });
+  const accounts = { 'gate-f': 'gf@x', 'gate-a': 'ga@x', 'gate-b': 'gb@x' };
+  const passwords = { 'gf@x': 'family-123' };
+  memoryFetch(store, { accounts, passwords });
+  const r = await login('family-123');
+  assert.equal(r.data.kind, 'family');
+  assert.match(accounts['gate-f'], /^g-family-[a-z0-9]{16}@demo-family\.firebaseapp\.com$/);
+  assert.equal('familyEmail' in store['public/gates'].data, false);
+  assert.equal('backupEmail' in store['public/gates'].data, false);
+  assert.equal(store['public/gates'].data.familyUid, 'gate-f');
+
+  calls = [];
+  memoryFetch(store, { accounts, passwords, authDown: true });
+  assert.equal((await login('whatever')).status, 503);
+  assert.equal(Object.keys(store).some((k) => k.startsWith('loginLocks/')), false);
+});
+
+test('관문 계정은 가족 계정 관리로 지우거나 비밀번호를 바꿀 수 없다', async () => {
+  db['public/gates'] = { gen: 5, familyUid: 'gate-f', adminUid: 'gate-a', backupUid: 'gate-b' };
+  const admin = await makeToken({ sub: 'user-2' });
+  assert.equal((await post('/admin/user', { token: admin, body: { action: 'delete', uid: 'gate-f' } })).status, 400);
+  assert.equal((await post('/admin/user', { token: admin, body: { action: 'setPassword', uid: 'gate-b', password: 'long-enough-pw' } })).status, 400);
+  assert.equal((await post('/admin/user', { token: admin, body: { action: 'setPassword', uid: 'nobody', password: 'long-enough-pw' } })).status, 404);
+});
+
+test('코드가 새어 나갔을 때: 그 코드의 사람들 열쇠를 모두 바꾸고, 부른 관리자에게는 새 열쇠를 준다', async () => {
+  const store = {
+    ...gateStore(),
+    'members/admin': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u1' },
+    'access/admin': { data: { people: [{ uid: 'admin', name: '아빠', email: 'a@x', key: 'old1' }, { uid: 'admin2', name: '엄마', email: 'b@x', key: 'old2' }] }, updateTime: 'u2' },
+  };
+  const accounts = { admin: 'a@x', admin2: 'b@x' };
+  const passwords = { 'a@x': 'old1', 'b@x': 'old2' };
+  memoryFetch(store, { accounts, passwords });
+  const r = await lpost('/admin/rekey', await makeToken({ sub: 'admin' }), { kind: 'admin' });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.changed, 2);
+  const people = store['access/admin'].data.people;
+  assert.notEqual(people[0].key, 'old1');
+  assert.equal(passwords['b@x'], people[1].key);
+  assert.deepEqual(r.data.self, { email: 'a@x', key: people[0].key });
+  // 백업 코드로는 관리자 목록만 바꿀 수 있다
+  assert.equal((await lpost('/admin/rekey', await makeToken({ sub: 'gate-b' }), { kind: 'family' })).status, 403);
+  assert.equal((await lpost('/admin/rekey', await makeToken({ sub: 'gate-b' }), { kind: 'admin' })).status, 200);
+  // 관문 계정은 다른 주소를 쓸 수 없다
+  assert.equal((await lpost('/notify', await makeToken({ sub: 'gate-b' }))).status, 403);
+});
+
+// ---------- 도움 요청 ----------
+
+test('도움 요청은 관리자, 나를 볼 수 있는 가족, 내가 볼 수 있는 가족에게 위치와 함께 간다', () => {
+  const me = { id: 'kid', name: '아이', links: ['grandma'], last: { type: 'help', lat: 37.5665, lng: 126.978, accuracy: 12.4, note: '다리 다침' } };
+  const members = [
+    me,
+    { id: 'dad', role: 'admin', links: [] },
+    { id: 'mom', role: 'member', links: ['kid'] },
+    { id: 'grandma', role: 'member', links: [] },
+    { id: 'uncle', role: 'member', links: ['mom'] },
+  ];
+  assert.deepEqual(helpRecipients(members, me).map((m) => m.id), ['dad', 'mom', 'grandma']);
+  const c = helpContent(me);
+  assert.equal(c.title, '🆘 도움 요청: 아이');
+  assert.equal(c.body, '다리 다침 · 위치: https://maps.google.com/?q=37.566500,126.978000 (±12m)');
+  assert.equal(c.urgent, true);
+  assert.equal(helpContent({ name: '아이', last: { type: 'help' } }).body, '위치 확인 안 됨');
+});
+
+test('도움 요청 알림은 한 신고에 한 번만 보내고, 문자 보낼 번호를 돌려준다', async () => {
+  const at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  const store = {
+    ...gateStore(),
+    'members/kid': { data: { name: '아이', active: true, role: 'member', gen: 5, links: [], last: { type: 'help', lat: 37.5, lng: 127, note: '갇힘', at } }, updateTime: 'u1' },
+    'members/dad': { data: { name: '아빠', phone: '010-1111-2222', active: true, role: 'admin', gen: 5 }, updateTime: 'u2' },
+    'members/off': { data: { name: '차단', phone: '010-9', active: false, role: 'admin', gen: 5 }, updateTime: 'u3' },
+    'pushTokens/dad_0': { data: { uid: 'dad', token: 'tok-dad', platform: 'Android FamilyEmergencyApp/1.2', at }, updateTime: 'u4' },
+    'pushTokens/tok-old': { data: { uid: 'off', at }, updateTime: 'u5' },
+  };
+  memoryFetch(store);
+  const token = await makeToken({ sub: 'kid' });
+  const r = await lpost('/help', token);
+  assert.equal(r.status, 200);
+  assert.equal(r.data.sent, 1);
+  assert.deepEqual(r.data.recipients, [{ name: '아빠', phone: '010-1111-2222' }]);
+  const push = JSON.parse(calls.find((c) => c.url.startsWith('https://fcm.googleapis.com/')).body).message;
+  assert.equal(push.token, 'tok-dad');
+  assert.equal(push.data.kind, 'help');
+  assert.match(push.data.body, /갇힘 · 위치: https:\/\/maps\.google\.com/);
+  const again = await lpost('/help', token);
+  assert.equal(again.data.sent, 0);
+  assert.equal(again.data.recipients.length, 1);
+});
+
+test('본인 계정 삭제: 내 정보·기록·토큰과 로그인 계정을 지우고 이름 목록에서 뺀다. 마지막 관리자는 못 지운다', async () => {
+  const at = '2026-10-29T00:00:00Z';
+  const store = {
+    ...gateStore(),
+    'members/kid': { data: { name: '아이', active: true, role: 'member', gen: 5 }, updateTime: 'u1' },
+    'members/dad': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u2' },
+    'profiles/kid': { data: { bloodType: 'O+' }, updateTime: 'u3' },
+    'checkins/c1': { data: { uid: 'kid', type: 'safe', at }, updateTime: 'u4' },
+    'checkins/c2': { data: { uid: 'dad', type: 'safe', at }, updateTime: 'u5' },
+    'meetingLogs/m1': { data: { uid: 'kid', message: '도착', at }, updateTime: 'u6' },
+    'pushTokens/kid_0': { data: { uid: 'kid', token: 't', at }, updateTime: 'u7' },
+    'emergencyLog/e1': { data: { action: 'declare', by: 'kid', at }, updateTime: 'u8' },
+    'access/family': { data: { people: [{ uid: 'kid', name: '아이', email: 'k@x', key: 'k' }, { uid: 'mom', name: '엄마', email: 'm@x', key: 'm' }] }, updateTime: 'u9' },
+  };
+  const accounts = { kid: 'k@x', dad: 'd@x' };
+  memoryFetch(store, { accounts });
+  assert.equal((await lpost('/me/delete', await makeToken({ sub: 'dad' }))).status, 409);
+  const r = await lpost('/me/delete', await makeToken({ sub: 'kid' }));
+  assert.equal(r.status, 200);
+  assert.equal(r.data.accountDeleted, true);
+  for (const k of ['members/kid', 'profiles/kid', 'checkins/c1', 'meetingLogs/m1', 'pushTokens/kid_0']) assert.equal(k in store, false, k);
+  assert.ok(store['checkins/c2'] && store['members/dad'] && store['emergencyLog/e1']);
+  assert.deepEqual(store['access/family'].data.people.map((p) => p.uid), ['mom']);
+  assert.equal('kid' in accounts, false);
 });

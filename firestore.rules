@@ -72,6 +72,11 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
 
+    // 휴대폰 시각: 오프라인에서 누른 신고는 나중에 올라오므로 과거는 괜찮지만, 미래 시각은 받지 않는다 (게시판 맨 위 고정 방지).
+    function notFuture(t) {
+      return t is timestamp && t <= request.time + duration.value(10, 'm');
+    }
+
     // ---------- 위치 기록 ----------
 
     function validLocation(d) {
@@ -102,7 +107,8 @@ service cloud.firestore {
     function validGates(d) {
       return d.keys().hasOnly(['gen', 'familyEmail', 'familyUid', 'adminEmail', 'adminUid', 'backupEmail', 'backupUid', 'setupBy', 'at'])
         && d.gen is int && d.gen >= 1
-        && str(d.familyEmail, 120) && str(d.adminEmail, 120) && str(d.backupEmail, 120)
+        // 관문 계정 이메일은 이제 공개하지 않는다 (알림 서버가 uid로 찾아 코드를 확인한다). 예전 문서에만 남아 있다.
+        && optStr(d, 'familyEmail', 120) && optStr(d, 'adminEmail', 120) && optStr(d, 'backupEmail', 120)
         && str(d.familyUid, 128) && str(d.adminUid, 128) && str(d.backupUid, 128)
         && d.familyUid != d.adminUid && d.familyUid != d.backupUid && d.adminUid != d.backupUid
         && d.at == request.time;
@@ -116,7 +122,7 @@ service cloud.firestore {
         && getAfter(gatesPath()).data.setupBy == request.auth.uid;
     }
 
-    // 로그인 전에 어떤 관문 계정으로 코드를 확인할지 알아야 하므로 누구나 읽는다 (비밀번호는 들어 있지 않다).
+    // 세대와 관문 계정 uid. 로그인 전에도 읽는다 (이메일·비밀번호는 들어 있지 않다).
     match /public/gates {
       allow read: if true;
       // 처음 설정: 한 번만. 같은 일괄 쓰기에서 본인이 이 세대의 관리자로 등록돼야 한다.
@@ -136,13 +142,14 @@ service cloud.firestore {
 
     // 코드를 넣은 뒤 고르는 이름 목록과, 각 사람 계정의 로그인 열쇠.
     // family: 일반 가족, admin: 관리자. 해당 관문 계정(=그 코드를 아는 사람)과 관리자만 읽는다.
+    // 백업 코드는 관리자를 새로 추가하려면 관리자 목록을 읽어야 한다 (관리자를 추가할 수 있으니 더 많은 권한은 아니다).
     function validAccess(d) {
       return d.keys().hasOnly(['people', 'updatedAt'])
         && d.people is list && d.people.size() <= 25;
     }
 
     match /access/{kind} {
-      allow read: if kind in ['family', 'admin'] && (isAdmin() || isGate(kind));
+      allow read: if kind in ['family', 'admin'] && (isAdmin() || isGate(kind) || (kind == 'admin' && isGate('backup')));
       allow create, update: if kind in ['family', 'admin']
         && validAccess(request.resource.data)
         && (isAdmin() || (kind == 'admin' && isGate('backup')) || isSettingUp());
@@ -170,6 +177,9 @@ service cloud.firestore {
     function selfEdit() {
       return changed().hasOnly(['last', 'phone', 'updatedAt'])
         && (!('updatedAt' in changed()) || request.resource.data.updatedAt == request.time)
+        // 마지막 신고 시각은 지금(서버 시각)이어야 한다 ("방금 무사"를 꾸며 내지 못하게)
+        && (!('last' in changed()) || request.resource.data.last == null || request.resource.data.last.at == request.time)
+        && (!('last' in changed()) || request.resource.data.last == null || notFuture(request.resource.data.last.clientAt))
         && validMember(request.resource.data);
     }
 
@@ -261,7 +271,7 @@ service cloud.firestore {
         && optStr(request.resource.data, 'note', 300)
         && (!('emergencyAt' in request.resource.data) || request.resource.data.emergencyAt is timestamp)
         && request.resource.data.at == request.time
-        && request.resource.data.clientAt is timestamp;
+        && notFuture(request.resource.data.clientAt);
       // 기록은 고칠 수 없다. 관리자만 지울 수 있다.
       allow update: if false;
       allow delete: if isAdmin();
@@ -421,7 +431,7 @@ service cloud.firestore {
         && request.resource.data.name == me().name
         && str(request.resource.data.message, 300)
         && request.resource.data.at == request.time
-        && request.resource.data.clientAt is timestamp;
+        && notFuture(request.resource.data.clientAt);
       allow update: if false;
       allow delete: if isAdmin() || (isMember() && resource.data.uid == request.auth.uid);
     }
@@ -487,6 +497,18 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---------- 접속 코드 잠금, 도움 요청 발송 표시 (알림 서버가 서비스 계정으로 쓴다) ----------
+    // 같은 인터넷 주소·기기에서 접속 코드를 3번 틀리면 하루 동안 잠긴다. 관리자는 보고 풀 수(지울 수) 있다.
+    match /loginLocks/{id} {
+      allow read, delete: if isAdmin();
+      allow create, update: if false;
+    }
+
+    match /helpAlerts/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // ---------- 관리 기록 (관리자 작업, 알림 발송 결과) ----------
     // 관리자 화면이 남기는 기록. 알림 발송 결과는 Worker가 서비스 계정으로 남긴다(규칙을 거치지 않음).
 
@@ -506,12 +528,16 @@ service cloud.firestore {
 
     // ---------- 알림 토큰 ----------
 
-    // 토큰은 기기마다 하나다. 같은 휴대폰에서 다른 가족이 로그인하면 소유자가 바뀐다.
-    match /pushTokens/{token} {
+    // 사람마다 기기 3칸: pushTokens/{uid}_0, _1, _2 (토큰은 token 필드). 칸 수를 정해 둬서 토큰을 잔뜩 만들어
+    // 알림 서버가 다른 가족의 토큰을 못 읽게 하는 일을 막는다. 같은 기기(토큰)를 여러 사람이 쓰면 가장 최근 등록이 이긴다.
+    // 예전 문서(id 가 토큰)는 새로 만들 수 없고, 본인과 관리자가 지울 수 있다.
+    match /pushTokens/{id} {
       allow read: if signedIn() && resource.data.uid == request.auth.uid;
       allow create, update: if isMember()
-        && request.resource.data.keys().hasOnly(['uid', 'platform', 'at'])
+        && id in [request.auth.uid + '_0', request.auth.uid + '_1', request.auth.uid + '_2']
+        && request.resource.data.keys().hasOnly(['uid', 'token', 'platform', 'at'])
         && request.resource.data.uid == request.auth.uid
+        && str(request.resource.data.token, 4096)
         && optStr(request.resource.data, 'platform', 200)
         && request.resource.data.at == request.time;
       allow delete: if isAdmin() || (signedIn() && resource.data.uid == request.auth.uid);
