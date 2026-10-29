@@ -72,6 +72,8 @@ function memberTable(state) {
 
 // 알림 서버는 1~2분마다 확인한다. 이보다 오래 소식이 없으면 멈춘 것으로 본다.
 const FEED_STALE_MS = 5 * 60 * 1000;
+// 확인 실패가 이만큼 이어지면(약 6분) 노란 안내 대신 빨간 경고
+const FEED_ERROR_ALERT_COUNT = 3;
 // 재난문자 인증키 하나의 하루 호출 한도 (알림 서버가 940번 안에서 나눠 쓴다)
 const DAILY_LIMIT = 1000;
 const DAILY_BUDGET = 940;
@@ -92,7 +94,16 @@ function feedStatus(feed) {
   }
   const at = toDate(feed.checkedAt);
   if (feed.error) {
-    return alertBox('error', null, h('p', null, t('재난문자를 받아 오지 못했습니다 ({time}): {error}', { time: formatDateTime(at), error: feed.error })));
+    // 정부 서버가 한두 번 응답하지 않은 것(HTTP 522 등)은 다음 확인에서 보통 풀린다. 이어지면 빨간 경고.
+    const count = Number(feed.errorCount) || 1;
+    const okAt = feed.okAt ? toDate(feed.okAt) : null;
+    const lastOk = okAt ? ` ${t('마지막 성공 {time}', { time: formatDateTime(okAt) })}` : '';
+    if (count < FEED_ERROR_ALERT_COUNT) {
+      return alertBox('warning', null, h('p', null,
+        t('{time} 확인에 실패해 1~2분 뒤 다시 확인합니다 ({count}번째). 정부 재난문자 서버 쪽 문제일 수 있습니다.', { time: formatDateTime(at), count }) + lastOk,
+        h('br'), h('span', { class: 'small' }, feed.error)));
+    }
+    return alertBox('error', null, h('p', null, t('재난문자를 받아 오지 못했습니다 ({time}): {error}', { time: formatDateTime(at), error: feed.error }) + lastOk));
   }
   const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
   if (feed.callsDay === today && Number(feed.calls) >= DAILY_BUDGET) {

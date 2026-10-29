@@ -8,7 +8,7 @@ import worker, {
 import { countAttempt, lockedUntil, maskIp } from '../src/login.js';
 import {
   classifyMessage, disasterSettings, regionMatches, pickHit, parseKst, kstDate, fetchDisasterMessages, shouldCheck, DAILY_BUDGET,
-  recentMessages,
+  recentMessages, isTransientError,
 } from '../src/disaster.js';
 
 const PROJECT = 'demo-family';
@@ -368,6 +368,59 @@ test('재난문자 조회: 키가 틀리면 오류, 많으면 마지막 쪽까�
   assert.deepEqual((await fetchDisasterMessages('k', NOON, fake(3))).map((m) => m.SN), [2, 3]);
   const bad = async () => new Response(JSON.stringify({ header: { resultCode: '30', errorMsg: '등록되지 않은 서비스키' } }));
   await assert.rejects(fetchDisasterMessages('bad', NOON, bad), /서비스키/);
+});
+
+test('정부 서버가 522 로 한 번 응답하지 않으면 잠깐 뒤 한 번 더 부르고, 계속 실패하면 일시 장애로 알린다', async () => {
+  let n = 0;
+  const flaky = async () => {
+    n++;
+    if (n === 1) return new Response('timeout', { status: 522 });
+    return new Response(JSON.stringify({ header: { resultCode: '00' }, totalCount: 1, body: [{ SN: 7 }] }));
+  };
+  assert.deepEqual((await fetchDisasterMessages('k', NOON, flaky, 0)).map((m) => m.SN), [7]);
+  assert.equal(n, 2);
+
+  n = 0;
+  const down = async () => { n++; return new Response('', { status: 522 }); };
+  const err = await fetchDisasterMessages('k', NOON, down, 0).catch((e) => e);
+  assert.match(err.message, /정부 재난문자 서버가 응답하지 않습니다 \(HTTP 522\)/);
+  assert.equal(isTransientError(err), true);
+  assert.equal(n, 2);
+
+  // 키가 틀린 것(4xx)은 다시 불러도 같으니 한 번만 부른다
+  n = 0;
+  const forbidden = async () => { n++; return new Response('', { status: 401 }); };
+  const e2 = await fetchDisasterMessages('k', NOON, forbidden, 0).catch((e) => e);
+  assert.equal(isTransientError(e2), false);
+  assert.equal(n, 1);
+
+  // 연결 자체가 안 되는 것도 일시 장애
+  const offline = async () => { throw new TypeError('fetch failed'); };
+  const e3 = await fetchDisasterMessages('k', NOON, offline, 0).catch((e) => e);
+  assert.equal(isTransientError(e3), true);
+  assert.match(e3.message, /연결하지 못했습니다/);
+});
+
+test('확인에 실패하면 연속 실패 횟수를 남기고, 성공하면 0으로 되돌리며 성공 시각(okAt)을 남긴다', async () => {
+  const now = NOON + 60e3;
+  disasterFetch({ feed: { lastSn: 200, error: '정부 재난문자 서버가 응답하지 않습니다 (HTTP 522)', errorCount: 2, okAt: new Date(NOON).toISOString() } });
+  const base = globalThis.fetch;
+  globalThis.fetch = async (input, init) => (String(input).startsWith('https://www.safetydata.go.kr/') ? new Response('', { status: 522 }) : base(input, init));
+  const r = await checkDisasterMessages({ ...denv, UPSTREAM_RETRY_MS: '0' }, now);
+  assert.match(r.error, /HTTP 522/);
+  let f = commits().at(-1)[0].update.fields;
+  assert.equal(f.errorCount.integerValue, '3');
+  assert.equal(f.errorTransient.booleanValue, true);
+  assert.equal('okAt' in f, false); // 마지막 성공 시각은 그대로 둔다
+  assert.equal(f.calls.integerValue, '2'); // 다시 부른 것도 호출 한도에 센다
+
+  calls = [];
+  disasterFetch({ items: [], feed: { lastSn: 200, error: 'x', errorCount: 3 } });
+  await checkDisasterMessages(denv, now);
+  f = commits().at(-1)[0].update.fields;
+  assert.equal(f.errorCount.integerValue, '0');
+  assert.equal(f.error.stringValue, '');
+  assert.ok(f.okAt.timestampValue);
 });
 
 function disasterFetch({ emergency = null, settings = null, feed = null, recent = null, items = [], commitOk = true } = {}) {

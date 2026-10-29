@@ -196,19 +196,44 @@ export function shouldCheck(state, now, urgent) {
   return { check: elapsed + 0.1 >= every, used, every };
 }
 
+// 정부 서버가 잠깐 응답하지 않을 때(5xx, 연결 끊김) 이만큼 기다렸다가 한 번 더 부른다.
+export const RETRY_DELAY_MS = 1500;
+
+/** 서버 쪽 일시 장애(5xx·연결 실패)인가. 키가 틀렸거나 요청이 잘못된 것(4xx, 조회 실패 코드)은 다시 불러도 같다. */
+export function isTransientError(err) {
+  return err?.transient === true;
+}
+
 /** 최근 30분 안팎의 재난문자 목록. 키가 틀리거나 서비스가 멈추면 오류. */
-export async function fetchDisasterMessages(key, now, fetchImpl = fetch) {
+export async function fetchDisasterMessages(key, now, fetchImpl = fetch, retryDelay = RETRY_DELAY_MS) {
   const rows = 1000;
-  const get = async (page) => {
+  const once = async (page) => {
     const q = new URLSearchParams({
       serviceKey: key, returnType: 'json', pageNo: String(page), numOfRows: String(rows), crtDt: kstDate(now - MAX_AGE_MS),
     });
-    const res = await fetchImpl(`${DISASTER_API}?${q}`, { headers: { Accept: 'application/json' } });
-    if (!res.ok) throw new Error(`재난문자 서버 오류 (${res.status})`);
+    let res;
+    try {
+      res = await fetchImpl(`${DISASTER_API}?${q}`, { headers: { Accept: 'application/json' } });
+    } catch (err) {
+      throw Object.assign(new Error(`정부 재난문자 서버에 연결하지 못했습니다 (${err.message || err})`), { transient: true });
+    }
+    if (!res.ok) {
+      throw Object.assign(new Error(`정부 재난문자 서버가 응답하지 않습니다 (HTTP ${res.status})`), { transient: res.status >= 500 });
+    }
     const data = await res.json().catch(() => null);
     const code = data?.header?.resultCode;
     if (code !== '00') throw new Error(`재난문자 조회 실패: ${data?.header?.errorMsg || data?.header?.resultMsg || code || '응답 없음'}`);
     return data;
+  };
+  // 일시 장애면 잠깐 뒤 한 번만 더 본다 (호출 한도를 아끼기 위해 한 번만).
+  const get = async (page) => {
+    try {
+      return await once(page);
+    } catch (err) {
+      if (!isTransientError(err)) throw err;
+      await new Promise((r) => setTimeout(r, retryDelay));
+      return once(page);
+    }
   };
   const first = await get(1);
   const total = Number(first.totalCount) || 0;

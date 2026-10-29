@@ -26,7 +26,7 @@ import {
 } from './login.js';
 import {
   SETTINGS_PATH, STATE_PATH, RECENT_PATH, SYSTEM_ID, SYSTEM_NAME, URGENT_MS, disasterSettings, fetchDisasterMessages, pickHit,
-  hasUrgentSignal, shouldCheck, kstDate, recentMessages,
+  hasUrgentSignal, shouldCheck, kstDate, recentMessages, isTransientError, RETRY_DELAY_MS,
 } from './disaster.js';
 
 const EMERGENCY_LABELS = {
@@ -437,16 +437,21 @@ export async function checkDisasterMessages(env, now = Date.now(), fetchImpl = f
   const usage = () => ({ callsDay: kstDate(now), calls: plan.used + calls, lastCallAt: checkedAt, every: plan.every });
   let items;
   try {
-    items = await fetchDisasterMessages(env.SAFETY_DATA_KEY, now, counted);
+    items = await fetchDisasterMessages(env.SAFETY_DATA_KEY, now, counted, Number(env.UPSTREAM_RETRY_MS ?? RETRY_DELAY_MS));
   } catch (err) {
-    const data = { checkedAt, error: String(err.message || err).slice(0, 200), ...usage() };
+    // 연속 실패 횟수를 남긴다. 정부 서버가 한 번 응답하지 않은 것(522 등)은 다음 확인에서 보통 풀리므로,
+    // 관리자 화면은 여러 번 이어질 때만 경고로 올린다. 마지막으로 성공한 시각은 그대로 둔다.
+    const data = {
+      checkedAt, error: String(err.message || err).slice(0, 200), errorCount: (state?.error ? Number(state.errorCount) || 1 : 0) + 1,
+      errorTransient: isTransientError(err), ...usage(),
+    };
     await fs.commit([{ path: STATE_PATH, data, mask: Object.keys(data) }]);
     return { error: err.message };
   }
   const lastSn = Number(state?.lastSn) || 0;
   const newest = items.reduce((max, m) => Math.max(max, Number(m.SN) || 0), lastSn);
   const hit = pickHit(items, lastSn, now, settings);
-  const out = { checkedAt, lastSn: newest, error: '', ...usage() };
+  const out = { checkedAt, okAt: checkedAt, lastSn: newest, error: '', errorCount: 0, ...usage() };
   if (hasUrgentSignal(items, lastSn, now, settings)) out.urgentAt = checkedAt;
   let result = null;
   if (hit) {

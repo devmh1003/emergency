@@ -298,6 +298,8 @@ export const EN = {
   '안전안내 문자, 훈련 안내, 해제 안내로는 울리지 않습니다. 이미 비상 중이면 새로 선언하지 않고, 해제는 관리자가 직접 합니다.': 'Safety notices, drill notices and all-clear messages do not trigger it. If an emergency is already active nothing new is declared, and an admin ends it by hand.',
   '알림 서버가 아직 재난문자를 확인하지 않았습니다. 재난문자 인증키를 알림 서버에 등록하면 1분 안에 시작합니다.': 'The notification server has not checked the alerts yet. It starts within a minute after the alert API key is registered on the notification server.',
   '재난문자를 받아 오지 못했습니다 ({time}): {error}': 'Could not fetch the alerts ({time}): {error}',
+  '마지막 성공 {time}': 'Last success {time}',
+  '{time} 확인에 실패해 1~2분 뒤 다시 확인합니다 ({count}번째). 정부 재난문자 서버 쪽 문제일 수 있습니다.': 'The check at {time} failed; retrying in 1–2 minutes (failure {count}). The government alert server may be having trouble.',
   '최근 5분 동안 재난문자를 확인하지 않았습니다. 마지막 확인: {time}': 'The alerts have not been checked in the last 5 minutes. Last check: {time}',
   '정상 작동 중 · 마지막 확인 {time}': 'Working · last checked {time}',
   '아직 자동 경보가 울린 적이 없습니다.': 'No automatic alarm yet.',
