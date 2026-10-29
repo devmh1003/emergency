@@ -460,11 +460,15 @@ export async function checkDisasterMessages(env, now = Date.now(), fetchImpl = f
       });
     }
   }
-  // 우리 지역에 온 문자는 단계와 상관없이 최근 10개를 남겨 가족 모두가 본다.
+  // 우리 지역에 온 문자는 단계와 상관없이 최근 10개를 남겨 가족 모두가 본다. 새 문자가 없어도 확인 시각과 지역은
+  // 매번 남겨서, 홈 화면이 "아직 확인 안 함"이 아니라 "확인했는데 없음"을 보여 줄 수 있게 한다.
   const recent = recentMessages(items, lastSn, settings, recentDoc?.items);
+  const recentData = { checkedAt, regions: settings.regions };
+  if (recent) Object.assign(recentData, { items: recent, updatedAt: checkedAt });
+  else if (!recentDoc) Object.assign(recentData, { items: [], updatedAt: checkedAt });
   await fs.commit([
     { path: STATE_PATH, data: out, mask: Object.keys(out) },
-    ...(recent ? [{ path: RECENT_PATH, data: { items: recent, updatedAt: checkedAt } }] : []),
+    { path: RECENT_PATH, data: recentData, mask: Object.keys(recentData) },
   ]);
   return { hit: hit ? hit.level : null, recent: recent ? recent.length : 0, ...(result || {}) };
 }

@@ -370,8 +370,10 @@ test('재난문자 조회: 키가 틀리면 오류, 많으면 마지막 쪽까�
   await assert.rejects(fetchDisasterMessages('bad', NOON, bad), /서비스키/);
 });
 
-function disasterFetch({ emergency = null, settings = null, feed = null, items = [], commitOk = true } = {}) {
-  const docs = { 'config/disasterAlerts': settings, 'config/disasterFeed': feed, 'emergency/current': emergency, 'public/gates': { gen: 5 } };
+function disasterFetch({ emergency = null, settings = null, feed = null, recent = null, items = [], commitOk = true } = {}) {
+  const docs = {
+    'config/disasterAlerts': settings, 'config/disasterFeed': feed, 'config/disasterRecent': recent, 'emergency/current': emergency, 'public/gates': { gen: 5 },
+  };
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     calls.push({ url, method: init.method || 'GET', body: init.body });
@@ -795,4 +797,32 @@ test('확인할 때 우리 지역 재난문자를 config/disasterRecent 에 남�
   const item = writes[1].update.fields.items.arrayValue.values[0].mapValue.fields;
   assert.equal(item.text.stringValue, '도로 통제');
   assert.equal(item.step.stringValue, '안전안내');
+  assert.ok(writes[1].update.fields.checkedAt.timestampValue);
+  // 지역 설정이 없으면(전국) 빈 목록
+  assert.deepEqual(writes[1].update.fields.regions, { arrayValue: { values: [] } });
+});
+
+test('새 문자가 없어도 확인 시각을 남기고, 처음이면 빈 목록 문서를 만든다 (가족이 "확인 중"임을 안다)', async () => {
+  const now = NOON + 60e3;
+  // 문서가 아직 없고 우리 지역 문자도 없음 → items: [] 로 만든다
+  const settings = { regions: ['서울'] };
+  disasterFetch({ settings, items: [msg({ SN: 300, EMRG_STEP_NM: '안전안내', RCPTN_RGN_NM: '부산광역시 전체' })], feed: { lastSn: 200 } });
+  let r = await checkDisasterMessages(denv, now);
+  assert.equal(r.recent, 0);
+  let writes = commits().at(-1);
+  assert.equal(writes.length, 2);
+  assert.match(writes[1].update.name, /config\/disasterRecent$/);
+  assert.deepEqual(writes[1].update.fields.items, { arrayValue: { values: [] } });
+  assert.equal(writes[1].update.fields.regions.arrayValue.values[0].stringValue, '서울');
+  assert.ok(writes[1].update.fields.checkedAt.timestampValue);
+  assert.deepEqual(writes[1].updateMask.fieldPaths.sort(), ['checkedAt', 'items', 'regions', 'updatedAt']);
+
+  // 문서가 있으면 목록은 두고 확인 시각만 바꾼다
+  calls = [];
+  disasterFetch({ settings, items: [], feed: { lastSn: 300 }, recent: { items: [{ sn: 1, text: 'x' }], updatedAt: new Date(NOON).toISOString() } });
+  r = await checkDisasterMessages(denv, now);
+  writes = commits().at(-1);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(writes[1].updateMask.fieldPaths.sort(), ['checkedAt', 'regions']);
+  assert.equal('items' in writes[1].update.fields, false);
 });

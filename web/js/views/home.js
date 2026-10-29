@@ -107,16 +107,22 @@ function tiles(state) {
 
 /** 우리 지역에 온 최근 재난문자(알림 서버가 남김)와 가까운 대피소 찾기 */
 function alertsPanel(state) {
-  const items = (state.disasterRecent?.items || []).slice(0, 5);
+  const recent = state.disasterRecent;
+  const items = (recent?.items || []).slice(0, 5);
   const pos = lastKnownPosition();
   const STEP_TAG = { 위급재난: 'status-help', 긴급재난: 'status-unknown' };
+  // 알림 서버가 확인할 때마다 checkedAt 을 남긴다. 문서 자체가 없으면 서버가 아직 한 번도 확인하지 않은 것.
+  const region = (recent?.regions || []).join(', ') || t('우리 지역');
+  const checked = recent?.checkedAt ? toDate(recent.checkedAt) : null;
   return panel(t('📨 우리 지역 재난문자'), null,
     items.length
       ? h('ul', { class: 'list list-compact' }, items.map((m) => h('li', { class: 'list-item small' },
         h('div', null, h('span', { class: `tag ${STEP_TAG[m.step] || 'tag-light'}` }, m.step || ''), ' ',
           h('span', { class: 'muted' }, `${formatDateTime(toDate(m.at))}${m.kind ? ` · ${m.kind}` : ''}`)),
         h('div', null, m.text))))
-      : h('p', { class: 'muted small' }, state.disasterRecent ? t('최근 우리 지역에 온 재난문자가 없습니다.') : t('알림 서버가 재난문자를 확인하면 여기에 보입니다.')),
+      : h('p', { class: 'muted small' }, recent ? t('최근 {region}에 온 재난문자가 없습니다.', { region }) : t('알림 서버가 재난문자를 확인하면 여기에 보입니다.')),
+    checked ? h('p', { class: 'muted small', style: { margin: '0.25rem 0 0' } },
+      t('{region} 기준 · 마지막 확인 {time}', { region, time: formatDateTime(checked) })) : null,
     h('div', { class: 'row', style: { marginTop: '0.75rem' } },
       shelterLinks(pos).map(([label, href]) => h('a', { class: 'btn btn-sm btn-outline', href, target: '_blank', rel: 'noopener' }, label))),
     h('p', { class: 'small muted', style: { margin: '0.5rem 0 0' } }, t('민방위 대피소는 지하철역·건물 지하가 대부분입니다. 평소에 집·직장 근처 한 곳씩 가 보세요.')));
