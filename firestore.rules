@@ -85,6 +85,11 @@ service cloud.firestore {
         && optNum(d, 'accuracy');
     }
 
+    // 휴대폰 배터리 잔량(%). 가족이 누구 휴대폰이 곧 꺼질지 안다.
+    function validBattery(d) {
+      return !('battery' in d) || d.battery == null || (d.battery is int && d.battery >= 0 && d.battery <= 100);
+    }
+
     function validCheckinType(t) {
       return t in ['safe', 'help', 'checkpoint'];
     }
@@ -93,7 +98,8 @@ service cloud.firestore {
     function validLast(l) {
       return l == null || (
         l is map
-        && l.keys().hasOnly(['type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt'])
+        && l.keys().hasOnly(['type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt', 'battery'])
+        && validBattery(l)
         && validCheckinType(l.type)
         && validLocation(l)
         && optStr(l, 'note', 300)
@@ -263,7 +269,8 @@ service cloud.firestore {
     match /checkins/{id} {
       allow read: if isAdmin() || (isMember() && resource.data.uid == request.auth.uid);
       allow create: if isMember()
-        && request.resource.data.keys().hasOnly(['uid', 'name', 'type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt', 'emergencyAt'])
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'type', 'lat', 'lng', 'accuracy', 'note', 'at', 'clientAt', 'emergencyAt', 'battery'])
+        && validBattery(request.resource.data)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.name == me().name
         && validCheckinType(request.resource.data.type)
@@ -495,6 +502,32 @@ service cloud.firestore {
     match /config/disasterFeed {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    // 우리 지역에 온 최근 재난문자 (알림 서버가 쓴다). 가족 모두 본다.
+    match /config/disasterRecent {
+      allow read: if isMember();
+      allow write: if false;
+    }
+
+    // ---------- 비상 물품 (가족 전체가 보고 고친다) ----------
+
+    function validSupply(d) {
+      return d.keys().hasOnly(['name', 'qty', 'where', 'note', 'expiresAt', 'by', 'byName', 'updatedAt'])
+        && str(d.name, 60) && d.name.size() > 0
+        && optStr(d, 'qty', 40)
+        && optStr(d, 'where', 60)
+        && optStr(d, 'note', 200)
+        && (!('expiresAt' in d) || d.expiresAt == null || d.expiresAt is timestamp)
+        && d.by == request.auth.uid
+        && d.byName == me().name
+        && d.updatedAt == request.time;
+    }
+
+    match /supplies/{id} {
+      allow read: if isMember();
+      allow create, update: if isMember() && validSupply(request.resource.data);
+      allow delete: if isMember();
     }
 
     // ---------- 접속 코드 잠금, 도움 요청 발송 표시 (알림 서버가 서비스 계정으로 쓴다) ----------

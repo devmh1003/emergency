@@ -1,11 +1,12 @@
 // 홈: 현재 상황, "나 무사해요" 생존신고, 바로가기, 가족 현황, 준비 상태, 현재 위치, 긴급 전화
 import { h, toast, busy, card, panel, alertBox, isIOS, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
-import { checkIn, notifyHelp } from '../store.js';
+import { checkIn, notifyHelp, batteryLevel } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
 import {
   checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, helpSmsBody, smsHref,
   emergencyLabel, emergencyLevel, levelActor, realStartedAt, meetingSchedule, checklistProgress, checklistKey,
+  suppliesStatus, toDate, shelterLinks,
 } from '../logic.js';
 import { t } from '../i18n.js';
 import { familyStatusList, statusSummary } from './family.js';
@@ -23,7 +24,7 @@ async function report(state, type, note, knownPos) {
       locError = err.message;
     }
   }
-  const result = await checkIn(state.me, type, pos, note, state.emergency);
+  const result = await checkIn(state.me, type, pos, note, state.emergency, await batteryLevel());
   const what = checkinLabel(type);
   if (result === 'queued') toast(t('{what} 저장됨 — 오프라인이라 연결되면 자동으로 전송됩니다.', { what }), 'warn');
   else toast(pos ? t('{what} 전송 완료', { what }) : t('{what} 전송 완료 (위치 없이)', { what }));
@@ -86,9 +87,11 @@ function situation(state) {
 function tiles(state) {
   const list = [
     ['#/meet', '📍', t('집합장소'), t('1~10순위 장소와 시간, 거리·방향')],
-    ['#/protocols', '📘', t('상황별 대처법'), t('전쟁·지진·홍수 등 15가지')],
+    ['#/protocols', '📘', t('상황별 대처법'), t('응급처치·물·대피 등 23가지')],
     ['#/contacts', '☎️', t('비상 연락처'), t('119·112와 가족 지정 연락처')],
     ['#/family', '👪', t('가족 현황'), state.isAdmin ? t('가족 전체 상태와 위치') : t('지정된 가족의 상태')],
+    ['#/sos', '🆘', t('구조 신호'), t('손전등·SOS 불빛·호루라기 소리')],
+    ['#/supplies', '📦', t('비상 물품'), t('물·식량·약 유통기한 관리')],
     ['#/records', '🗂', t('내 신고 기록'), t('내가 남긴 위치와 시간')],
     ['#/print', '🖨', t('인쇄용 비상카드'), t('지갑·배낭에 넣을 종이 카드')],
   ];
@@ -102,8 +105,26 @@ function tiles(state) {
     h('span', null, desc))));
 }
 
+/** 우리 지역에 온 최근 재난문자(알림 서버가 남김)와 가까운 대피소 찾기 */
+function alertsPanel(state) {
+  const items = (state.disasterRecent?.items || []).slice(0, 5);
+  const pos = lastKnownPosition();
+  const STEP_TAG = { 위급재난: 'status-help', 긴급재난: 'status-unknown' };
+  return panel(t('📨 우리 지역 재난문자'), null,
+    items.length
+      ? h('ul', { class: 'list list-compact' }, items.map((m) => h('li', { class: 'list-item small' },
+        h('div', null, h('span', { class: `tag ${STEP_TAG[m.step] || 'tag-light'}` }, m.step || ''), ' ',
+          h('span', { class: 'muted' }, `${formatDateTime(toDate(m.at))}${m.kind ? ` · ${m.kind}` : ''}`)),
+        h('div', null, m.text))))
+      : h('p', { class: 'muted small' }, state.disasterRecent ? t('최근 우리 지역에 온 재난문자가 없습니다.') : t('알림 서버가 재난문자를 확인하면 여기에 보입니다.')),
+    h('div', { class: 'row', style: { marginTop: '0.75rem' } },
+      shelterLinks(pos).map(([label, href]) => h('a', { class: 'btn btn-sm btn-outline', href, target: '_blank', rel: 'noopener' }, label))),
+    h('p', { class: 'small muted', style: { margin: '0.5rem 0 0' } }, t('민방위 대피소는 지하철역·건물 지하가 대부분입니다. 평소에 집·직장 근처 한 곳씩 가 보세요.')));
+}
+
 function readiness(state) {
   const r = checklistProgress(state.protocols, state.checklist);
+  const sup = suppliesStatus(state.supplies);
   let next = null;
   for (const p of state.protocols) {
     const item = (p.checklist || []).find((i) => !state.checklist[checklistKey(p.id, i.id)]);
@@ -116,7 +137,13 @@ function readiness(state) {
         h('div', { class: 'progress' }, h('div', { class: 'progress-bar', style: { width: `${r.percent}%` } })),
         h('div', { class: 'small muted' }, t('체크리스트 {checked}/{total}개 완료', { checked: r.checked, total: r.total })))),
     next ? h('p', { class: 'small', style: { marginTop: '0.75rem' } }, t('다음 할 일: '),
-      h('a', { href: `#/protocols/${encodeURIComponent(next.p.id)}` }, `${next.p.title} — ${next.item.text}`)) : h('p', { class: 'small' }, t('모든 준비를 마쳤습니다. 6개월마다 다시 확인하세요.')));
+      h('a', { href: `#/protocols/${encodeURIComponent(next.p.id)}` }, `${next.p.title} — ${next.item.text}`)) : h('p', { class: 'small' }, t('모든 준비를 마쳤습니다. 6개월마다 다시 확인하세요.')),
+    sup.expired.length || sup.soon.length
+      ? h('p', { class: 'small', style: { marginTop: '0.5rem' } }, '📦 ',
+        h('a', { href: '#/supplies' }, sup.expired.length
+          ? t('유통기한 지난 물품 {n}개', { n: sup.expired.length }) + (sup.soon.length ? t(', 30일 안 {m}개', { m: sup.soon.length }) : '')
+          : t('30일 안에 기한이 오는 물품 {m}개', { m: sup.soon.length })))
+      : null);
 }
 
 export function homeView({ state, live, onChange }) {
@@ -197,6 +224,8 @@ export function homeView({ state, live, onChange }) {
         live(() => familyStatusList(state, { compact: true }))),
       panel(t('나의 대비 상태'), { href: '#/protocols', label: t('체크리스트') },
         live(() => readiness(state)))),
+
+    live(() => alertsPanel(state)),
 
     panel(t('현재 위치'), null,
       locationPanel(state, {

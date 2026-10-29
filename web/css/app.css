@@ -981,3 +981,17 @@ input[type="checkbox"] { width: 1.5rem; min-height: 1.5rem; height: 1.5rem; marg
   .print-card { border: 2px solid #000; padding: 0.75rem; }
   .print-card th, .print-card td { border-color: #000; }
 }
+
+/* ---------- 구조 신호 (손전등·SOS 불빛) ---------- */
+.sos-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: #fff;
+  display: grid;
+  place-items: end center;
+  padding-bottom: 2rem;
+  cursor: pointer;
+}
+.sos-overlay.dark { background: #000; }
+.sos-overlay-hint { font-size: 0.875rem; color: #888; background: rgba(128, 128, 128, 0.15); padding: 0.25rem 0.75rem; border-radius: 999px; }

@@ -7,6 +7,7 @@ import {
   db, auth, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
 } from './firebase.js';
 import { DEFAULT_PROTOCOLS } from './data/protocols.js';
+import { SUPPLY_PRESETS } from './logic.js';
 import { t } from './i18n.js';
 
 const ref = (...path) => doc(db, ...path);
@@ -69,12 +70,24 @@ export function commitWithTimeout(promise, ms = 5000) {
  * @param {'safe'|'help'|'checkpoint'} type
  * @param {{lat,lng,accuracy}|null} pos
  */
-export function checkIn(me, type, pos, note = '', emergency = null) {
+/** 휴대폰 배터리 잔량(%) — 가족이 누구 휴대폰이 곧 꺼질지 안다. 못 읽으면 null. */
+export async function batteryLevel() {
+  try {
+    if (!navigator.getBattery) return null;
+    const b = await navigator.getBattery();
+    return Math.round(b.level * 100);
+  } catch {
+    return null;
+  }
+}
+
+export function checkIn(me, type, pos, note = '', emergency = null, battery = null) {
   const clientAt = Timestamp.now();
   const loc = {
     lat: pos?.lat ?? null,
     lng: pos?.lng ?? null,
     accuracy: pos?.accuracy ?? null,
+    battery: Number.isInteger(battery) ? Math.max(0, Math.min(100, battery)) : null,
   };
   const batch = writeBatch(db);
   const record = {
@@ -224,6 +237,8 @@ export async function hasAckedAlarmTest(uid, testId) {
 
 export const watchDisasterSettings = (cb, onError) => watchDoc(['config', 'disasterAlerts'], cb, onError);
 export const watchDisasterFeed = (cb, onError) => watchDoc(['config', 'disasterFeed'], cb, onError);
+// 우리 지역에 온 최근 재난문자 (알림 서버가 남긴다, 가족 모두 본다)
+export const watchDisasterRecent = (cb, onError) => watchDoc(['config', 'disasterRecent'], cb, onError);
 
 export async function saveDisasterSettings(me, { enabled, regions, level2 }) {
   const batch = writeBatch(db);
@@ -658,6 +673,32 @@ export async function deleteContact(id, name) {
   const batch = writeBatch(db);
   batch.delete(ref('contacts', id));
   addAudit(batch, 'contact.delete', { target: id, targetName: name });
+  await batch.commit();
+}
+
+// ---------- 비상 물품 (가족 전체가 보고 고친다) ----------
+
+export const watchSupplies = (cb, onError) => watchCollection('supplies', cb, onError);
+
+export function saveSupply(me, id, { name, qty = '', where = '', note = '', expiresAt = null }) {
+  const target = id ? ref('supplies', id) : doc(collection(db, 'supplies'));
+  return setDoc(target, {
+    name: name.slice(0, 60), qty: qty.slice(0, 40), where: where.slice(0, 60), note: note.slice(0, 200),
+    expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
+    by: me.id, byName: me.name, updatedAt: serverTimestamp(),
+  });
+}
+
+export function deleteSupply(id) {
+  return deleteDoc(ref('supplies', id));
+}
+
+/** 기본 물품 목록을 넣는다 (수량·기한은 나중에 채운다). */
+export async function seedSupplies(me) {
+  const batch = writeBatch(db);
+  for (const p of SUPPLY_PRESETS) {
+    batch.set(doc(collection(db, 'supplies')), { ...p, note: '', expiresAt: null, by: me.id, byName: me.name, updatedAt: serverTimestamp() });
+  }
   await batch.commit();
 }
 

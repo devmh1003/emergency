@@ -10,6 +10,9 @@
 export const DISASTER_API = 'https://www.safetydata.go.kr/V2/api/DSSP-IF-00247';
 export const SETTINGS_PATH = 'config/disasterAlerts';
 export const STATE_PATH = 'config/disasterFeed';
+// 우리 지역에 온 최근 재난문자 (가족 모두 본다)
+export const RECENT_PATH = 'config/disasterRecent';
+export const RECENT_MAX = 10;
 export const SYSTEM_ID = 'safetydata';
 export const SYSTEM_NAME = '정부 재난문자';
 
@@ -53,6 +56,30 @@ export function disasterSettings(doc) {
     ? doc.regions.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 20)
     : [];
   return { enabled: doc?.enabled !== false, regions, level2: doc?.level2 === true };
+}
+
+/**
+ * 우리 지역에 온 재난문자(단계 무관) 최근 목록. 새 문자를 앞에 붙이고 10개만 남긴다.
+ * @returns {Array|null} 바뀐 것이 없으면 null
+ */
+export function recentMessages(items, lastSn, settings, previous) {
+  const fresh = items
+    .filter((m) => (Number(m.SN) || 0) > lastSn && regionMatches(m.RCPTN_RGN_NM, settings.regions))
+    .map((m) => ({
+      sn: Number(m.SN) || 0,
+      at: new Date(parseKst(m.CRT_DT) || Date.now()),
+      step: String(m.EMRG_STEP_NM || '').slice(0, 20),
+      kind: String(m.DST_SE_NM || '').slice(0, 20),
+      region: messageRegions(m.RCPTN_RGN_NM).join(', ').slice(0, 120),
+      text: String(m.MSG_CN || '').trim().slice(0, 300),
+    }))
+    .sort((a, b) => b.sn - a.sn);
+  if (!fresh.length) return null;
+  const seen = new Set(fresh.map((m) => m.sn));
+  const old = (Array.isArray(previous) ? previous : []).filter((m) => !seen.has(Number(m.sn)))
+    .map((m) => ({ ...m, at: new Date(m.at) }))
+    .sort((a, b) => Number(b.sn) - Number(a.sn));
+  return [...fresh, ...old].slice(0, RECENT_MAX);
 }
 
 /** 한국 시각 기준 날짜 "YYYYMMDD" */

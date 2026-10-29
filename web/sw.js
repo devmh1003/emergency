@@ -54,6 +54,8 @@ const APP_FILES = [
   'js/views/protocols.js',
   'js/views/records.js',
   'js/views/settings.js',
+  'js/views/sos.js',
+  'js/views/supplies.js',
 ];
 
 const FIREBASE = 'https://www.gstatic.com/firebasejs/13.0.0';

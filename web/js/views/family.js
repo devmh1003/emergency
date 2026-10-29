@@ -30,6 +30,12 @@ export function statusSummary(state) {
     h('span', { class: 'tag tag-big status-unknown' }, t('확인 안 됨 {n}', { n: counts.unknown })));
 }
 
+/** 마지막 신고 때 휴대폰 배터리. 20% 아래면 눈에 띄게. */
+function batteryText(last) {
+  if (!Number.isInteger(last?.battery)) return '';
+  return ` · ${last.battery <= 20 ? '🪫' : '🔋'}${last.battery}%`;
+}
+
 function canOpen(state, m) {
   return state.isAdmin || m.id === state.me.id || state.members.some((x) => x.id === m.id);
 }
@@ -58,12 +64,12 @@ export function familyStatusList(state, { compact = false } = {}) {
   if (compact) {
     return h('ul', { class: 'list' }, rows.map(({ m, s }) => h('li', { class: 'list-item' },
       h('div', { class: 'item-main' }, nameCell(state, m), h('span', { class: `tag status-${s.key}` }, s.label)),
-      h('div', { class: 'small muted' }, m.last ? `${checkinLabel(m.last.type)} · ${formatAgo(m.last.clientAt || m.last.at)}` : t('신고 기록 없음')))));
+      h('div', { class: 'small muted' }, m.last ? `${checkinLabel(m.last.type)} · ${formatAgo(m.last.clientAt || m.last.at)}${batteryText(m.last)}` : t('신고 기록 없음')))));
   }
   return table([t('이름'), t('상태'), t('마지막 신고'), t('메모'), t('연락')], rows.map(({ m, s }) => [
     nameCell(state, m),
     h('span', { class: `tag status-${s.key}` }, s.label),
-    m.last ? h('span', null, `${checkinLabel(m.last.type)} · ${formatAgo(m.last.clientAt || m.last.at)}`) : h('span', { class: 'muted' }, t('기록 없음')),
+    m.last ? h('span', null, `${checkinLabel(m.last.type)} · ${formatAgo(m.last.clientAt || m.last.at)}${batteryText(m.last)}`) : h('span', { class: 'muted' }, t('기록 없음')),
     m.last?.note || '-',
     contactButtons(m),
   ]));

@@ -22,6 +22,8 @@ import { recordsAdminView, directoryView } from './views/records.js';
 import { adminHubView } from './views/adminhub.js';
 import { contactsView } from './views/contacts.js';
 import { guideView } from './views/guide.js';
+import { sosView } from './views/sos.js';
+import { suppliesView } from './views/supplies.js';
 import { settingsView, recordsView, printView } from './views/settings.js';
 
 const viewEl = document.getElementById('view');
@@ -45,16 +47,20 @@ export const state = {
   meetingPoints: [],
   serverProtocols: [],
   contacts: [],
+  supplies: [],
+  disasterRecent: null,
   checklist: {},
   online: navigator.onLine,
   get protocols() {
     // 영어 화면: 기본 대처법은 영어판을 쓰고, 관리자가 따로 추가한 대처법만 서버 것을 붙인다.
+    // 한국어: 서버 대처법이 우선이고, 서버에 없는 기본 대처법(새로 추가된 것)은 뒤에 붙인다.
     let list;
     if (lang === 'en') {
       const builtIn = new Set(DEFAULT_PROTOCOLS_EN.map((p) => p.id));
       list = [...DEFAULT_PROTOCOLS_EN, ...this.serverProtocols.filter((p) => !builtIn.has(p.id))];
     } else {
-      list = this.serverProtocols.length ? this.serverProtocols : DEFAULT_PROTOCOLS;
+      const onServer = new Set(this.serverProtocols.map((p) => p.id));
+      list = [...this.serverProtocols, ...DEFAULT_PROTOCOLS.filter((p) => !onServer.has(p.id))];
     }
     return [...list].sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
   },
@@ -108,6 +114,8 @@ const routes = [
   ['/member/:uid', memberDetailView],
   ['/contacts', contactsView],
   ['/guide', guideView],
+  ['/sos', sosView],
+  ['/supplies', suppliesView],
   ['/emergency', emergencyView],
   ['/settings', settingsView],
   ['/records', recordsView],
@@ -461,6 +469,14 @@ function startDataSubscriptions() {
     state.serverProtocols = list;
     notify();
   }, onSubError));
+  unsubs.push(store.watchSupplies((list) => {
+    state.supplies = list;
+    notify();
+  }, onSubError));
+  unsubs.push(store.watchDisasterRecent((d) => {
+    state.disasterRecent = d;
+    notify();
+  }, () => {}));
   unsubs.push(store.watchContacts((list) => {
     state.contacts = list.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     notify();

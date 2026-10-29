@@ -3,13 +3,40 @@ import { h, toast, panel, pageHeader, empty, alertBox } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { setChecklistItem } from '../store.js';
 import { checklistKey, checklistProgress, emergencyLabel } from '../logic.js';
-import { t } from '../i18n.js';
+import { t, lang } from '../i18n.js';
 
 const PHASE_ICON = {
   '지금 즉시': '⚡', '몇 시간 안에': '⏱', '며칠 동안': '📅', '평소에': '🗓',
   // 영어 기본 대처법(data/protocols.en.js)의 단계 이름
   'Right now': '⚡', 'Within a few hours': '⏱', 'Over the next few days': '📅', 'Ahead of time': '🗓',
 };
+
+// ---------- 읽어주기 (손이 바쁘거나 어두울 때, 휴대폰의 음성 합성으로) ----------
+
+let speaking = null;
+
+export function stopSpeaking() {
+  if (speaking) { speaking = null; window.speechSynthesis?.cancel(); }
+}
+
+function readAloudButton(p) {
+  if (!('speechSynthesis' in window)) return null;
+  const btn = h('button', { class: 'btn btn-outline btn-sm', type: 'button' }, t('🔊 읽어주기'));
+  btn.addEventListener('click', () => {
+    if (speaking === p.id) { stopSpeaking(); btn.textContent = t('🔊 읽어주기'); return; }
+    stopSpeaking();
+    const parts = [p.title, p.summary || '', ...(p.keyPoints || []), ...(p.steps || []).flatMap((s) => [s.phase, ...s.items])];
+    const u = new SpeechSynthesisUtterance(parts.filter(Boolean).join('. '));
+    u.lang = lang === 'en' ? 'en-US' : 'ko-KR';
+    u.rate = 0.95;
+    u.onend = () => { if (speaking === p.id) { speaking = null; btn.textContent = t('🔊 읽어주기'); } };
+    speaking = p.id;
+    btn.textContent = t('⏹ 읽기 멈추기');
+    window.speechSynthesis.speak(u);
+  });
+  window.addEventListener('hashchange', stopSpeaking, { once: true });
+  return btn;
+}
 
 function progressOf(state, p) {
   return checklistProgress([p], state.checklist);
@@ -55,7 +82,7 @@ export function protocolDetailView({ state, params, live }) {
   return h('div', { class: 'page' },
     live(() => {
       const p = find();
-      return p ? pageHeader(`${p.icon || ''} ${p.title}`.trim(), { crumbs, lead: p.summary }) : pageHeader(t('삭제된 대처법'), { crumbs });
+      return p ? pageHeader(`${p.icon || ''} ${p.title}`.trim(), { crumbs, lead: p.summary }, readAloudButton(p)) : pageHeader(t('삭제된 대처법'), { crumbs });
     }),
     live(() => {
       const p = find();

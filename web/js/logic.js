@@ -273,6 +273,56 @@ export function helpSmsBody(name, note, pos, now = new Date()) {
   return t('[가족 비상연락] 🆘 {name} 도움 요청.{what} {time}{where}', { name, what, time: formatDateTime(now), where });
 }
 
+// ---------- 비상 물품 ----------
+
+export const SUPPLY_SOON_DAYS = 30;
+
+/** 기본 물품 목록 (수량·기한은 가족이 채운다) */
+export const SUPPLY_PRESETS = [
+  { name: '생수 2L', qty: '1인 3L × 3일', where: '' },
+  { name: '비상식량 (통조림·건빵·에너지바)', qty: '3일분', where: '' },
+  { name: '상비약·처방약', qty: '2주분', where: '' },
+  { name: '건전지 (AA·AAA)', qty: '', where: '' },
+  { name: '부탄가스', qty: '6개', where: '' },
+  { name: 'KF94 마스크', qty: '1인 5장', where: '' },
+  { name: '보조배터리', qty: '', where: '' },
+  { name: 'LED 랜턴·손전등', qty: '', where: '' },
+  { name: '소독제·구급상자', qty: '', where: '' },
+  { name: '현금 (소액권)', qty: '', where: '' },
+];
+
+/** 'expired' | 'soon' | 'ok' | 'none' */
+export function expiryState(item, now = Date.now()) {
+  const d = toDate(item?.expiresAt);
+  if (!d) return 'none';
+  const left = d.getTime() - now;
+  if (left < 0) return 'expired';
+  if (left <= SUPPLY_SOON_DAYS * 86400e3) return 'soon';
+  return 'ok';
+}
+
+/** 기한이 지난 것과 30일 안에 오는 것 (기한 순) */
+export function suppliesStatus(list, now = Date.now()) {
+  const byDate = (a, b) => toDate(a.expiresAt).getTime() - toDate(b.expiresAt).getTime();
+  return {
+    expired: (list || []).filter((i) => expiryState(i, now) === 'expired').sort(byDate),
+    soon: (list || []).filter((i) => expiryState(i, now) === 'soon').sort(byDate),
+  };
+}
+
+/** 가까운 민방위 대피소를 지도 앱에서 찾는 링크. 위치를 알면 그 주변으로. */
+export function shelterLinks(pos) {
+  const q = encodeURIComponent('민방위대피소');
+  const google = hasLocation(pos)
+    ? `https://www.google.com/maps/search/${q}/@${pos.lat.toFixed(5)},${pos.lng.toFixed(5)},16z`
+    : `https://www.google.com/maps/search/${q}`;
+  return [
+    [t('🗺 가까운 대피소 (구글 지도)'), google],
+    [t('네이버 지도'), `https://map.naver.com/p/search/${q}`],
+    [t('카카오맵'), `https://map.kakao.com/?q=${q}`],
+  ];
+}
+
 /** 체크리스트 진행률 */
 export function checklistProgress(protocols, done) {
   let total = 0;

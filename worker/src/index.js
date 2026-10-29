@@ -25,8 +25,8 @@ import {
   hiddenEmail, randomKey,
 } from './login.js';
 import {
-  SETTINGS_PATH, STATE_PATH, SYSTEM_ID, SYSTEM_NAME, URGENT_MS, disasterSettings, fetchDisasterMessages, pickHit,
-  hasUrgentSignal, shouldCheck, kstDate,
+  SETTINGS_PATH, STATE_PATH, RECENT_PATH, SYSTEM_ID, SYSTEM_NAME, URGENT_MS, disasterSettings, fetchDisasterMessages, pickHit,
+  hasUrgentSignal, shouldCheck, kstDate, recentMessages,
 } from './disaster.js';
 
 const EMERGENCY_LABELS = {
@@ -423,7 +423,7 @@ export async function checkDisasterMessages(env, now = Date.now(), fetchImpl = f
   if (!env.SAFETY_DATA_KEY || !env.GOOGLE_SERVICE_ACCOUNT || !env.FIREBASE_PROJECT_ID) return { skipped: '설정 없음' };
   const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT);
   const fs = new Firestore(env.FIREBASE_PROJECT_ID, () => getAccessToken(sa));
-  const [settingsDoc, state, emergency, gates] = await fs.batchGet([SETTINGS_PATH, STATE_PATH, 'emergency/current', 'public/gates']);
+  const [settingsDoc, state, emergency, gates, recentDoc] = await fs.batchGet([SETTINGS_PATH, STATE_PATH, 'emergency/current', 'public/gates', RECENT_PATH]);
   const settings = disasterSettings(settingsDoc);
   if (!settings.enabled) return { skipped: '꺼짐' };
 
@@ -460,8 +460,13 @@ export async function checkDisasterMessages(env, now = Date.now(), fetchImpl = f
       });
     }
   }
-  await fs.commit([{ path: STATE_PATH, data: out, mask: Object.keys(out) }]);
-  return { hit: hit ? hit.level : null, ...(result || {}) };
+  // 우리 지역에 온 문자는 단계와 상관없이 최근 10개를 남겨 가족 모두가 본다.
+  const recent = recentMessages(items, lastSn, settings, recentDoc?.items);
+  await fs.commit([
+    { path: STATE_PATH, data: out, mask: Object.keys(out) },
+    ...(recent ? [{ path: RECENT_PATH, data: { items: recent, updatedAt: checkedAt } }] : []),
+  ]);
+  return { hit: hit ? hit.level : null, recent: recent ? recent.length : 0, ...(result || {}) };
 }
 
 // ---------- 접속 코드 (login.js) ----------

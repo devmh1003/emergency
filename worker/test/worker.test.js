@@ -8,6 +8,7 @@ import worker, {
 import { countAttempt, lockedUntil, maskIp } from '../src/login.js';
 import {
   classifyMessage, disasterSettings, regionMatches, pickHit, parseKst, kstDate, fetchDisasterMessages, shouldCheck, DAILY_BUDGET,
+  recentMessages,
 } from '../src/disaster.js';
 
 const PROJECT = 'demo-family';
@@ -763,4 +764,35 @@ test('본인 계정 삭제: 내 정보·기록·토큰과 로그인 계정을 �
   assert.ok(store['checkins/c2'] && store['members/dad'] && store['emergencyLog/e1']);
   assert.deepEqual(store['access/family'].data.people.map((p) => p.uid), ['mom']);
   assert.equal('kid' in accounts, false);
+});
+
+test('우리 지역 재난문자는 단계와 상관없이 최근 10개를 남긴다', () => {
+  const settings = disasterSettings({ regions: ['서울'] });
+  const items = [
+    msg({ SN: 101, EMRG_STEP_NM: '안전안내', DST_SE_NM: '호우', MSG_CN: '호우주의보' }),
+    msg({ SN: 102, RCPTN_RGN_NM: '부산광역시 전체 ', MSG_CN: '부산 지진' }),
+    msg({ SN: 103, MSG_CN: '서울 지진' }),
+  ];
+  const prev = Array.from({ length: 9 }, (_, i) => ({ sn: 50 + i, at: '2026-10-28T00:00:00Z', step: '안전안내', kind: '', region: '서울특별시', text: `old ${i}` }));
+  const r = recentMessages(items, 100, settings, prev);
+  assert.equal(r.length, 10);
+  assert.deepEqual(r.slice(0, 2).map((m) => m.sn), [103, 101]);
+  assert.equal(r[0].text, '서울 지진');
+  assert.equal(r[0].at.toISOString(), '2026-10-29T03:00:00.000Z');
+  assert.equal(r.at(-1).sn, 51);
+  assert.equal(recentMessages(items, 103, settings, prev), null);
+});
+
+test('확인할 때 우리 지역 재난문자를 config/disasterRecent 에 남긴다', async () => {
+  const now = NOON + 60e3;
+  disasterFetch({ items: [msg({ SN: 300, EMRG_STEP_NM: '안전안내', DST_SE_NM: '교통', MSG_CN: '도로 통제' })], feed: { lastSn: 200 } });
+  const r = await checkDisasterMessages(denv, now);
+  assert.equal(r.hit, null);
+  assert.equal(r.recent, 1);
+  const writes = commits().at(-1);
+  assert.equal(writes.length, 2);
+  assert.match(writes[1].update.name, /config\/disasterRecent$/);
+  const item = writes[1].update.fields.items.arrayValue.values[0].mapValue.fields;
+  assert.equal(item.text.stringValue, '도로 통제');
+  assert.equal(item.step.stringValue, '안전안내');
 });

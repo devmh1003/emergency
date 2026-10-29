@@ -7,6 +7,8 @@ import {
   emergencyLevel, alarmKey, levelActor, emergencyLogTitle, isFreshAlarmTest, buildTimeline,
 } from '../web/js/logic.js';
 import { DEFAULT_PROTOCOLS } from '../web/js/data/protocols.js';
+import { DEFAULT_PROTOCOLS_EN } from '../web/js/data/protocols.en.js';
+import { expiryState, suppliesStatus, shelterLinks } from '../web/js/logic.js';
 
 const T0 = new Date('2026-10-27T09:00:00+09:00');
 const at = (h) => new Date(T0.getTime() + h * 3600_000);
@@ -234,4 +236,33 @@ test('테스트 알람은 보낸 뒤 30분 안에만 울린다', () => {
   assert.equal(isFreshAlarmTest({ at: T0 }, at(0.25)), true);
   assert.equal(isFreshAlarmTest({ at: T0 }, at(1)), false);
   assert.equal(isFreshAlarmTest({}, T0), false);
+});
+
+test('영어 기본 프로토콜은 한국어와 항목 수가 같다', () => {
+  assert.equal(DEFAULT_PROTOCOLS_EN.length, DEFAULT_PROTOCOLS.length);
+  DEFAULT_PROTOCOLS.forEach((p, i) => {
+    const e = DEFAULT_PROTOCOLS_EN[i];
+    assert.equal(e.id, p.id);
+    assert.equal(e.keyPoints.length, p.keyPoints.length, p.id);
+    assert.equal(e.steps.length, p.steps.length, p.id);
+    p.steps.forEach((st, j) => assert.equal(e.steps[j].items.length, st.items.length, `${p.id} step ${j}`));
+    assert.deepEqual(e.checklist.map((c) => c.id), p.checklist.map((c) => c.id), p.id);
+    assert.ok(p.keyPoints.length <= 6 && p.summary.length <= 300 && p.title.length <= 60, p.id);
+  });
+});
+
+test('비상 물품: 기한 지남·30일 안·괜찮음을 가른다', () => {
+  const now = Date.parse('2026-10-29T00:00:00Z');
+  const day = 86400e3;
+  const items = [
+    { name: '물', expiresAt: new Date(now - day) },
+    { name: '건빵', expiresAt: new Date(now + 10 * day) },
+    { name: '약', expiresAt: new Date(now + 31 * day) },
+    { name: '건전지', expiresAt: null },
+  ];
+  assert.deepEqual(items.map((i) => expiryState(i, now)), ['expired', 'soon', 'ok', 'none']);
+  const s = suppliesStatus(items, now);
+  assert.deepEqual([s.expired.map((i) => i.name), s.soon.map((i) => i.name)], [['물'], ['건빵']]);
+  assert.match(shelterLinks({ lat: 37.5665, lng: 126.978 })[0][1], /@37\.56650,126\.97800/);
+  assert.equal(shelterLinks(null).length, 3);
 });

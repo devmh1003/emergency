@@ -350,6 +350,42 @@ test('알림 서버가 재난문자로 선언한 비상도 관리자가 해제�
   await assertSucceeds(setDoc(doc(as('admin'), 'emergency/current'), { active: false, endedBy: 'admin', endedByName: '아빠', endedAt: serverTimestamp() }, { merge: true }));
 });
 
+// ---------- 비상 물품, 우리 지역 재난문자, 배터리 ----------
+
+test('비상 물품은 가족 모두가 보고 고치며, 본인 이름으로만 쓴다', async () => {
+  const item = (uid, name, extra = {}) => ({ name: '생수 2L', qty: '12병', where: '', note: '', expiresAt: Timestamp.now(), by: uid, byName: name, updatedAt: serverTimestamp(), ...extra });
+  await assertSucceeds(setDoc(doc(as('mom'), 'supplies/s1'), item('mom', '엄마')));
+  await assertSucceeds(setDoc(doc(as('kid'), 'supplies/s1'), item('kid', '아이', { expiresAt: null })));
+  await assertFails(setDoc(doc(as('kid'), 'supplies/s2'), item('mom', '엄마')));
+  await assertFails(setDoc(doc(as('kid'), 'supplies/s2'), item('kid', '엄마')));
+  await assertFails(setDoc(doc(as('kid'), 'supplies/s2'), item('kid', '아이', { name: '' })));
+  await assertFails(setDoc(doc(as('kid'), 'supplies/s2'), item('kid', '아이', { expiresAt: '2027-01-01' })));
+  await assertFails(setDoc(doc(as('off'), 'supplies/s2'), item('off', '비활성')));
+  await assertFails(setDoc(doc(as('stranger'), 'supplies/s2'), item('stranger', 'x')));
+  await assertSucceeds(getDocs(collection(as('kid'), 'supplies')));
+  await assertFails(getDocs(collection(as('stranger'), 'supplies')));
+  await assertSucceeds(deleteDoc(doc(as('kid'), 'supplies/s1')));
+});
+
+test('우리 지역 재난문자는 가족 모두 읽고 아무도 못 쓴다', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'config/disasterRecent'), { items: [], updatedAt: Timestamp.now() }));
+  await assertSucceeds(getDoc(doc(as('kid'), 'config/disasterRecent')));
+  await assertFails(getDoc(doc(as('stranger'), 'config/disasterRecent')));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterRecent'), { items: [] }));
+});
+
+test('신고에 배터리 잔량(0~100)을 남길 수 있다', async () => {
+  await assertSucceeds(checkinBatch(as('kid'), 'kid', '아이', { battery: 37 }).commit());
+  await assertFails(checkinBatch(as('kid'), 'kid', '아이', { battery: 137 }).commit());
+  await assertFails(checkinBatch(as('kid'), 'kid', '아이', { battery: '37' }).commit());
+  await assertSucceeds(updateDoc(doc(as('kid'), 'members/kid'), {
+    last: { type: 'safe', lat: null, lng: null, note: '', battery: 12, at: serverTimestamp(), clientAt: Timestamp.now() },
+  }));
+  await assertFails(updateDoc(doc(as('kid'), 'members/kid'), {
+    last: { type: 'safe', lat: null, lng: null, note: '', battery: -1, at: serverTimestamp(), clientAt: Timestamp.now() },
+  }));
+});
+
 // ---------- 집합장소·프로토콜·체크리스트 ----------
 
 const point = (rank, extra = {}) => ({
