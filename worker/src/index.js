@@ -4,14 +4,19 @@
 //   POST /test-push    내 기기로 테스트 알림
 //   POST /drill        관리자: 가족 전체 테스트 알람 (테스트마다 한 번만)
 //   POST /admin/user   관리자: 가족 로그인 계정 삭제 · 비밀번호 초기화
+//   (1분마다)          정부 긴급재난문자 확인 → 전쟁·지진 같은 위급 문자면 1급 비상 자동 선언 (disaster.js)
 //
 // 환경 변수 (wrangler.toml / 비밀 변수):
 //   FIREBASE_PROJECT_ID     Firebase 프로젝트 id
 //   ALLOWED_ORIGINS         사이트 주소 (쉼표로 여러 개). 예: https://devmh1003.github.io
 //   APP_URL                 알림을 누르면 열 주소. 예: https://devmh1003.github.io/emergency/
 //   GOOGLE_SERVICE_ACCOUNT  (비밀) 서비스 계정 JSON 전체
+//   SAFETY_DATA_KEY         (비밀) 재난안전데이터공유플랫폼 긴급재난문자 인증키. 없으면 재난문자를 확인하지 않는다.
 import { verifyIdToken, getAccessToken, AuthError } from './google.js';
-import { Firestore } from './firestore.js';
+import { Firestore, autoId } from './firestore.js';
+import {
+  SETTINGS_PATH, STATE_PATH, SYSTEM_ID, SYSTEM_NAME, disasterSettings, fetchDisasterMessages, pickHit,
+} from './disaster.js';
 
 const EMERGENCY_LABELS = {
   war: '전쟁·공습',
@@ -318,6 +323,102 @@ async function handleTestPush(env, fs, accessToken, caller) {
   return result;
 }
 
+// ---------- 정부 긴급재난문자 자동 경보 ----------
+
+const SYSTEM_CALLER = { uid: SYSTEM_ID, member: { name: SYSTEM_NAME } };
+
+/** Firestore 가 돌려주는 모양의 시각 문자열 (초 단위로 맞춰 다시 읽어도 같은 값이 되게) */
+function wholeSecond(now) {
+  const at = new Date(Math.floor(now / 1000) * 1000);
+  return { at, iso: at.toISOString().replace('.000Z', 'Z') };
+}
+
+/**
+ * 재난문자로 비상을 선언(또는 2급 → 1급 격상)하고 가족에게 알린다.
+ * 이미 같은 단계 이상의 비상 중이면 아무것도 하지 않는다 (가족이 선언한 비상을 덮어쓰지 않는다).
+ * @returns {{action:'declare'|'escalate'|'skip'|'retry', sent?:number}}
+ */
+export async function autoDeclare(env, fs, emergency, hit, now) {
+  const active = emergency?.active === true;
+  if (active && (emergencyLevel(emergency) === 'real' || hit.level === 'alert')) return { action: 'skip' };
+  const { at, iso } = wholeSecond(now);
+  const message = hit.text.slice(0, 500);
+  let data;
+  let mask;
+  let after;
+  if (active) {
+    data = { level: 'real', realAt: at, escalatedBy: SYSTEM_ID, escalatedByName: SYSTEM_NAME, message };
+    mask = Object.keys(data);
+    after = { ...emergency, ...data, realAt: iso };
+  } else {
+    data = {
+      active: true, level: hit.level, type: hit.type, message, declaredBy: SYSTEM_ID, declaredByName: SYSTEM_NAME, declaredAt: at,
+    };
+    if (hit.level === 'real') data.realAt = at;
+    // 지난 비상의 격상 기록, 2급이면 지난 1급 시각은 지운다 (사이트의 선언과 같게).
+    mask = [...Object.keys(data), 'escalatedBy', 'escalatedByName', ...(hit.level === 'real' ? [] : ['realAt'])];
+    after = { ...data, declaredAt: iso, ...(data.realAt ? { realAt: iso } : {}) };
+  }
+  // 선언과 "알림 보냄" 표시를 같이 쓴다. 그 사이 누가 비상 문서를 바꿨으면 실패하고 다음 확인 때 다시 본다.
+  const key = notificationKey(after);
+  data.notifiedKey = key;
+  mask.push('notifiedKey');
+  const ok = await fs.commit([
+    { path: 'emergency/current', data, mask, ...(emergency ? { updateTime: emergency.updateTime } : { exists: false }) },
+    {
+      path: `emergencyLog/${autoId()}`,
+      data: { action: active ? 'escalate' : 'declare', level: hit.level, type: hit.type, message, by: SYSTEM_ID, byName: SYSTEM_NAME, at },
+      exists: false,
+    },
+  ]);
+  if (!ok) return { action: 'retry' };
+
+  const accessToken = await fs.getToken();
+  const members = new Set((await fs.list('members')).filter((m) => m.active === true).map((m) => m.id));
+  const tokens = (await fs.list('pushTokens')).filter((t) => members.has(t.uid));
+  const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(after));
+  await logNotify(fs, SYSTEM_CALLER, 'notify.emergency', result,
+    `${hit.level === 'alert' ? '2급' : '1급'} · 재난문자 자동 · 기기 ${tokens.length}대 대상`);
+  return { action: active ? 'escalate' : 'declare', ...result };
+}
+
+/** 1분마다: 새 재난문자를 읽고, 울릴 문자가 있으면 자동 선언. 확인 결과는 관리자 화면에 보이도록 남긴다. */
+export async function checkDisasterMessages(env, now = Date.now()) {
+  if (!env.SAFETY_DATA_KEY || !env.GOOGLE_SERVICE_ACCOUNT || !env.FIREBASE_PROJECT_ID) return { skipped: '설정 없음' };
+  const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT);
+  const fs = new Firestore(env.FIREBASE_PROJECT_ID, () => getAccessToken(sa));
+  const [settingsDoc, state, emergency] = await fs.batchGet([SETTINGS_PATH, STATE_PATH, 'emergency/current']);
+  const settings = disasterSettings(settingsDoc);
+  if (!settings.enabled) return { skipped: '꺼짐' };
+
+  const checkedAt = new Date(now);
+  let items;
+  try {
+    items = await fetchDisasterMessages(env.SAFETY_DATA_KEY, now);
+  } catch (err) {
+    await fs.commit([{ path: STATE_PATH, data: { checkedAt, error: String(err.message || err).slice(0, 200) }, mask: ['checkedAt', 'error'] }]);
+    return { error: err.message };
+  }
+  const lastSn = Number(state?.lastSn) || 0;
+  const newest = items.reduce((max, m) => Math.max(max, Number(m.SN) || 0), lastSn);
+  const hit = pickHit(items, lastSn, now, settings);
+  const out = { checkedAt, lastSn: newest, error: '' };
+  let result = null;
+  if (hit) {
+    result = await autoDeclare(env, fs, emergency, hit, now);
+    // 다른 사람이 같은 때 비상 문서를 바꿨으면, 이 문자를 다음 확인 때 다시 본다.
+    if (result.action === 'retry') out.lastSn = lastSn;
+    else {
+      Object.assign(out, {
+        lastHitAt: checkedAt, lastHitLevel: hit.level, lastHitKind: hit.kind, lastHitRegion: hit.region.slice(0, 200),
+        lastHitText: hit.text.slice(0, 300), lastHitAction: result.action,
+      });
+    }
+  }
+  await fs.commit([{ path: STATE_PATH, data: out, mask: Object.keys(out) }]);
+  return { hit: hit ? hit.level : null, ...(result || {}) };
+}
+
 async function handleAdminUser(env, accessToken, caller, body) {
   if (caller.member.role !== 'admin') throw new HttpError(403, '관리자만 할 수 있습니다');
   const { action, uid, password } = body;
@@ -347,6 +448,11 @@ async function handleAdminUser(env, accessToken, caller, body) {
 }
 
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(checkDisasterMessages(env, event.scheduledTime || Date.now())
+      .catch((err) => console.error('재난문자 확인 실패', err)));
+  },
+
   async fetch(request, env) {
     const origin = allowedOrigin(request, env);
     const url = new URL(request.url);

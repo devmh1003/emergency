@@ -2,7 +2,10 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
 import { fromDocument } from '../src/firestore.js';
-import worker, { notificationKey, notificationContent, pickTokens, pushMessage, alarmAck } from '../src/index.js';
+import worker, { notificationKey, notificationContent, pickTokens, pushMessage, alarmAck, checkDisasterMessages } from '../src/index.js';
+import {
+  classifyMessage, disasterSettings, regionMatches, pickHit, parseKst, kstDate, fetchDisasterMessages,
+} from '../src/disaster.js';
 
 const PROJECT = 'demo-family';
 const enc = new TextEncoder();
@@ -279,4 +282,177 @@ test('안드로이드 앱 기기에는 데이터 메시지로 보내고, 확인 
   const web = pushMessage({ APP_URL: 'https://example.test/' }, { id: 'tok-web', platform: 'Mozilla/5.0 Chrome' }, notificationContent(real));
   assert.equal(web.notification.title, notificationContent(real).title);
   assert.equal(web.webpush.notification.requireInteraction, true);
+});
+
+// ---------- 정부 긴급재난문자 ----------
+
+const ALL = disasterSettings(null);
+const msg = (o = {}) => ({
+  SN: 100, CRT_DT: '2026/10/29 12:00:00', EMRG_STEP_NM: '긴급재난', DST_SE_NM: '지진',
+  RCPTN_RGN_NM: '서울특별시 전체 ,경기도 전체 ', MSG_CN: '[기상청] 경북 경주시 규모4.3 지진발생/낙하물 주의', ...o,
+});
+const NOON = parseKst('2026/10/29 12:00:00');
+
+test('재난문자 시각은 한국 시각으로 읽는다', () => {
+  assert.equal(new Date(NOON).toISOString(), '2026-10-29T03:00:00.000Z');
+  assert.equal(kstDate(Date.parse('2026-10-28T15:30:00Z')), '20261029');
+});
+
+test('위급재난과 지진·지진해일·민방공만 1급, 안전안내·훈련·해제로는 울리지 않는다', () => {
+  assert.equal(classifyMessage(msg(), ALL).level, 'real');
+  assert.equal(classifyMessage(msg(), ALL).type, 'earthquake');
+  assert.equal(classifyMessage(msg({ EMRG_STEP_NM: '위급재난', DST_SE_NM: '민방공', MSG_CN: '공습경보 발령. 지하 대피소로 대피하십시오' }), ALL).type, 'war');
+  assert.equal(classifyMessage(msg({ EMRG_STEP_NM: '위급재난', DST_SE_NM: '산사태', MSG_CN: '즉시 대피' }), ALL).level, 'real');
+  assert.equal(classifyMessage(msg({ DST_SE_NM: '지진해일' }), ALL).type, 'tsunami');
+  assert.equal(classifyMessage(msg({ EMRG_STEP_NM: '안전안내' }), ALL), null);
+  // 그 밖의 긴급재난은 2급 알림을 켰을 때만
+  const rain = msg({ DST_SE_NM: '호우', MSG_CN: '시간당 50mm 강한 비' });
+  assert.equal(classifyMessage(rain, ALL), null);
+  const lv2 = classifyMessage(rain, disasterSettings({ level2: true }));
+  assert.deepEqual([lv2.level, lv2.type], ['alert', 'flood']);
+  // 훈련 안내, 해제·복귀 안내
+  assert.equal(classifyMessage(msg({ MSG_CN: '금일 보라매병원 일대에서 실제 재난상황을 가정한 안전한국훈련을 실시합니다' }), ALL), null);
+  assert.equal(classifyMessage(msg({ EMRG_STEP_NM: '위급재난', DST_SE_NM: '민방공', MSG_CN: '경계경보 해제' }), ALL), null);
+  assert.equal(classifyMessage(msg({ EMRG_STEP_NM: '위급재난', DST_SE_NM: '민방공', MSG_CN: '위험범위 이탈, 주민들은 일상으로 복귀 바랍니다' }), ALL), null);
+  assert.equal(classifyMessage(msg({ MSG_CN: '이것은 훈련이 아닙니다. 실제 상황입니다' }), ALL).level, 'real');
+});
+
+test('지역: 비우면 전국, 줄임말과 시·군·구까지 맞춘다', () => {
+  assert.equal(regionMatches('인천광역시 옹진군 백령면', []), true);
+  assert.equal(regionMatches('인천광역시 옹진군 백령면', ['서울']), false);
+  assert.equal(regionMatches('서울특별시 광진구 ', ['서울']), true);
+  assert.equal(regionMatches('경기도 전체 ,강원특별자치도 전체 ', ['경기 수원']), true);
+  assert.equal(regionMatches('경기도 수원시 장안구', ['경기도 수원시']), true);
+  assert.equal(regionMatches('경기도 성남시 분당구', ['경기 수원']), false);
+  assert.equal(regionMatches('경상북도 경주시', ['경북']), true);
+  assert.equal(regionMatches('경상남도 전체 ', ['경북']), false);
+  assert.equal(classifyMessage(msg({ RCPTN_RGN_NM: '부산광역시 전체 ' }), disasterSettings({ regions: ['서울'] })), null);
+  assert.equal(disasterSettings({ enabled: false }).enabled, false);
+});
+
+test('새 문자 중 30분 안의 것만, 1급을 먼저 고른다', () => {
+  const items = [
+    msg({ SN: 99 }),
+    msg({ SN: 101, DST_SE_NM: '호우', MSG_CN: '강한 비' }),
+    msg({ SN: 102, CRT_DT: '2026/10/29 11:00:00' }),
+    msg({ SN: 103 }),
+  ];
+  const lv2 = disasterSettings({ level2: true });
+  assert.equal(pickHit(items, 100, NOON + 60e3, lv2).sn, 103);
+  assert.equal(pickHit(items, 103, NOON + 60e3, lv2), null);
+  assert.equal(pickHit(items.slice(0, 2), 100, NOON + 60e3, lv2).level, 'alert');
+  assert.equal(pickHit(items, 100, NOON + 31 * 60e3, lv2), null);
+});
+
+test('재난문자 조회: 키가 틀리면 오류, 많으면 마지막 쪽까지 읽는다', async () => {
+  const urls = [];
+  const fake = (pages) => async (url) => {
+    urls.push(url);
+    const p = Number(new URL(url).searchParams.get('pageNo'));
+    return new Response(JSON.stringify({ header: { resultCode: '00' }, totalCount: pages * 1000 - 10, body: [{ SN: p }] }));
+  };
+  assert.deepEqual((await fetchDisasterMessages('k', NOON, fake(1))).map((m) => m.SN), [1]);
+  assert.match(urls[0], /serviceKey=k/);
+  assert.match(urls[0], /crtDt=20261029/);
+  assert.deepEqual((await fetchDisasterMessages('k', NOON, fake(3))).map((m) => m.SN), [2, 3]);
+  const bad = async () => new Response(JSON.stringify({ header: { resultCode: '30', errorMsg: '등록되지 않은 서비스키' } }));
+  await assert.rejects(fetchDisasterMessages('bad', NOON, bad), /서비스키/);
+});
+
+function disasterFetch({ emergency = null, settings = null, feed = null, items = [], commitOk = true } = {}) {
+  const docs = { 'config/disasterAlerts': settings, 'config/disasterFeed': feed, 'emergency/current': emergency };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, method: init.method || 'GET', body: init.body });
+    const ok = (data) => new Response(JSON.stringify(data), { status: 200 });
+    if (url === 'https://oauth2.googleapis.com/token') return ok({ access_token: 'at', expires_in: 3600 });
+    if (url.startsWith('https://www.safetydata.go.kr/')) return ok({ header: { resultCode: '00' }, totalCount: items.length, body: items });
+    if (url.startsWith('https://fcm.googleapis.com/')) return ok({ name: 'sent' });
+    if (url.endsWith('/documents:batchGet')) {
+      return ok(JSON.parse(init.body).documents.map((name) => {
+        const path = name.split('/documents/')[1];
+        return docs[path] ? { found: fsDoc(path, docs[path]) } : { missing: name };
+      }));
+    }
+    if (url.endsWith('/documents:commit')) return commitOk ? ok({}) : new Response('{}', { status: 409 });
+    if (url.includes('/documents/members')) return ok({ documents: [fsDoc('members/user-1', { active: true })] });
+    if (url.includes('/documents/pushTokens')) {
+      return ok({ documents: [fsDoc('pushTokens/tok-a', { uid: 'user-1', platform: 'Android FamilyEmergencyApp/1.1' })] });
+    }
+    if (init.method === 'POST' && url.endsWith('/documents/auditLog')) return ok({});
+    throw new Error(`unexpected fetch ${url}`);
+  };
+}
+
+const commits = () => calls.filter((c) => c.url.endsWith('/documents:commit')).map((c) => JSON.parse(c.body).writes);
+const fcmCalls = () => calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/'));
+const denv = { ...env, SAFETY_DATA_KEY: 'test-key' };
+
+test('지진 재난문자가 오면 1급 비상을 자동 선언하고 앱에 전체 화면 경보를 보낸다', async () => {
+  disasterFetch({ items: [msg({ SN: 500 })] });
+  const r = await checkDisasterMessages(denv, NOON + 60e3);
+  assert.equal(r.action, 'declare');
+  assert.equal(r.sent, 1);
+  const [declare, state] = commits();
+  const em = declare[0];
+  assert.match(em.update.name, /emergency\/current$/);
+  assert.deepEqual(em.currentDocument, { exists: false });
+  assert.equal(em.update.fields.level.stringValue, 'real');
+  assert.equal(em.update.fields.type.stringValue, 'earthquake');
+  assert.equal(em.update.fields.declaredByName.stringValue, '정부 재난문자');
+  assert.equal(em.update.fields.declaredAt.timestampValue, '2026-10-29T03:01:00Z');
+  assert.equal(em.update.fields.notifiedKey.stringValue, 'real:2026-10-29T03:01:00Z');
+  assert.ok(em.updateMask.fieldPaths.includes('escalatedBy'));
+  assert.equal(declare[1].update.fields.action.stringValue, 'declare');
+  // 앱에는 1급 데이터 메시지
+  const push = JSON.parse(fcmCalls()[0].body).message;
+  assert.equal(push.data.level, 'real');
+  assert.match(push.data.title, /1급 비상: 지진/);
+  assert.match(push.data.body, /^정부 재난문자: \[기상청\]/);
+  assert.equal(push.data.ack, `real:${Date.parse('2026-10-29T03:01:00Z')}`);
+  // 확인 상태
+  const f = state[0].update.fields;
+  assert.equal(f.lastSn.integerValue, '500');
+  assert.equal(f.lastHitAction.stringValue, 'declare');
+  assert.equal(f.error.stringValue, '');
+});
+
+test('이미 1급 비상 중이면 다시 선언하지 않고, 2급 중이면 1급으로 격상한다', async () => {
+  disasterFetch({ items: [msg({ SN: 500 })], emergency: { active: true, level: 'real', declaredAt: 'T1' } });
+  assert.equal((await checkDisasterMessages(denv, NOON + 60e3)).action, 'skip');
+  assert.equal(commits().length, 1);
+  assert.equal(fcmCalls().length, 0);
+
+  calls = [];
+  disasterFetch({ items: [msg({ SN: 500 })], emergency: { active: true, level: 'alert', type: 'flood', declaredAt: '2026-10-29T02:00:00Z' } });
+  const r = await checkDisasterMessages(denv, NOON + 60e3);
+  assert.equal(r.action, 'escalate');
+  const em = commits()[0][0];
+  assert.equal(em.currentDocument.updateTime, '2026-10-27T00:00:00Z');
+  assert.deepEqual(em.updateMask.fieldPaths.sort(), ['escalatedBy', 'escalatedByName', 'level', 'message', 'notifiedKey', 'realAt']);
+  assert.equal(em.update.fields.notifiedKey.stringValue, 'real:2026-10-29T03:01:00Z');
+});
+
+test('이미 본 문자, 꺼 둔 설정, 키가 없을 때는 울리지 않는다', async () => {
+  disasterFetch({ items: [msg({ SN: 500 })], feed: { lastSn: 500 } });
+  assert.equal((await checkDisasterMessages(denv, NOON + 60e3)).hit, null);
+  assert.equal(commits().length, 1);
+
+  calls = [];
+  disasterFetch({ items: [msg({ SN: 501 })], settings: { enabled: false } });
+  assert.equal((await checkDisasterMessages(denv, NOON + 60e3)).skipped, '꺼짐');
+  assert.equal(calls.some((c) => c.url.includes('safetydata')), false);
+
+  calls = [];
+  assert.equal((await checkDisasterMessages(env, NOON)).skipped, '설정 없음');
+  assert.equal(calls.length, 0);
+});
+
+test('그 사이 비상 문서가 바뀌면 이번 문자를 다음 확인 때 다시 본다', async () => {
+  disasterFetch({ items: [msg({ SN: 500 })], feed: { lastSn: 400 }, commitOk: false });
+  const r = await checkDisasterMessages(denv, NOON + 60e3);
+  assert.equal(r.action, 'retry');
+  assert.equal(fcmCalls().length, 0);
+  const state = commits().at(-1)[0].update.fields;
+  assert.equal(state.lastSn.integerValue, '400');
 });

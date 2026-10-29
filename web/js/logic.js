@@ -450,6 +450,7 @@ const AUDIT_LABELS = {
   'notify.end': '해제 알림 발송',
   'notify.test': '테스트 알림 발송',
   'notify.drill': '테스트 알람 발송',
+  'disaster.settings': '재난문자 자동 경보 설정',
   'code.change': '접속 코드 변경',
   'backup.adminCode': '백업 코드로 관리자 코드 변경',
   'backup.adminAdd': '백업 코드로 관리자 추가',

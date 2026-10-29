@@ -316,6 +316,40 @@ test('테스트 알람은 관리자만 보내고, 가족은 본인 확인만 남
   await assertFails(getDoc(doc(as('kid'), 'alarmTests/t1/acks/mom')));
 });
 
+// ---------- 정부 긴급재난문자 자동 경보 ----------
+
+test('재난문자 자동 경보 설정은 관리자만 보고 바꾸며, 확인 결과는 알림 서버만 쓴다', async () => {
+  const settings = (uid, name, extra = {}) => ({
+    enabled: true, regions: ['서울', '경기 수원'], level2: false, updatedBy: uid, updatedByName: name, updatedAt: serverTimestamp(), ...extra,
+  });
+  await assertFails(setDoc(doc(as('mom'), 'config/disasterAlerts'), settings('mom', '엄마')));
+  await assertSucceeds(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('admin', '아빠')));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('mom', '아빠')));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('admin', '아빠', { regions: '서울' })));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('admin', '아빠', { enabled: 'yes' })));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('admin', '아빠', { key: 'x' })));
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterAlerts'), settings('admin', '아빠', { regions: Array.from({ length: 21 }, (_, i) => `r${i}`) })));
+  await assertSucceeds(getDoc(doc(as('admin'), 'config/disasterAlerts')));
+  await assertFails(getDoc(doc(as('mom'), 'config/disasterAlerts')));
+  await assertFails(deleteDoc(doc(as('admin'), 'config/disasterAlerts')));
+
+  await assertFails(setDoc(doc(as('admin'), 'config/disasterFeed'), { lastSn: 1 }));
+  await assertSucceeds(getDoc(doc(as('admin'), 'config/disasterFeed')));
+  await assertFails(getDoc(doc(as('mom'), 'config/disasterFeed')));
+  await assertFails(setDoc(doc(as('admin'), 'config/other'), { x: 1 }));
+});
+
+test('알림 서버가 재난문자로 선언한 비상도 관리자가 해제할 수 있다', async () => {
+  const at = Timestamp.now();
+  await setEmergency({
+    active: true, level: 'real', type: 'earthquake', message: '[기상청] 지진발생', declaredBy: 'safetydata', declaredByName: '정부 재난문자',
+    declaredAt: at, realAt: at, notifiedKey: 'real:x',
+  });
+  await assertSucceeds(getDoc(doc(as('kid'), 'emergency/current')));
+  await assertFails(setDoc(doc(as('mom'), 'emergency/current'), { active: false, endedBy: 'mom', endedByName: '엄마', endedAt: serverTimestamp() }, { merge: true }));
+  await assertSucceeds(setDoc(doc(as('admin'), 'emergency/current'), { active: false, endedBy: 'admin', endedByName: '아빠', endedAt: serverTimestamp() }, { merge: true }));
+});
+
 // ---------- 집합장소·프로토콜·체크리스트 ----------
 
 const point = (rank, extra = {}) => ({

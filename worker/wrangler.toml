@@ -1,5 +1,6 @@
 # Cloudflare Worker 설정. 비밀 키는 여기에 넣지 말고 아래 명령으로 등록한다:
 #   npx wrangler secret put GOOGLE_SERVICE_ACCOUNT   (서비스 계정 JSON 전체를 붙여 넣기)
+#   npx wrangler secret put SAFETY_DATA_KEY          (재난안전데이터공유플랫폼 긴급재난문자 인증키)
 name = "family-emergency"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
@@ -10,6 +11,10 @@ workers_dev = true
 FIREBASE_PROJECT_ID = "emergeny-404ab"
 ALLOWED_ORIGINS = "https://devmh1003.github.io"
 APP_URL = "https://devmh1003.github.io/emergency/"
+
+# 1분마다 정부 긴급재난문자를 확인한다 (src/disaster.js)
+[triggers]
+crons = ["* * * * *"]
 
 [observability]
 enabled = true

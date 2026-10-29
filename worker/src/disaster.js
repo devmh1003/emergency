@@ -1,0 +1,154 @@
+// 행정안전부 긴급재난문자 자동 감시 (재난안전데이터공유플랫폼 DSSP-IF-00247)
+// 1분마다 새 재난문자를 읽어, 정말 위급한 문자(전쟁·공습, 지진 등)면 가족 비상을 자동으로 선언한다.
+//
+// 재난문자 단계: 위급재난(공습·경계경보 등, 가장 높음) > 긴급재난(지진, 호우·산불 대피 등) > 안전안내
+//   1급(경보음): 위급재난 전부, 긴급재난 중 지진·지진해일·민방공
+//   2급(알림만): 그 밖의 긴급재난 (관리자가 켰을 때만)
+// 안전안내 문자, 훈련 안내, 해제·복귀 안내로는 울리지 않는다.
+
+export const DISASTER_API = 'https://www.safetydata.go.kr/V2/api/DSSP-IF-00247';
+export const SETTINGS_PATH = 'config/disasterAlerts';
+export const STATE_PATH = 'config/disasterFeed';
+export const SYSTEM_ID = 'safetydata';
+export const SYSTEM_NAME = '정부 재난문자';
+
+// 이보다 오래된 문자로는 울리지 않는다 (서버가 한동안 멈췄다 다시 돌 때 지난 문자로 울리지 않게).
+export const MAX_AGE_MS = 30 * 60 * 1000;
+
+const CRITICAL_TYPES = ['지진', '지진해일', '민방공'];
+
+// 재난 구분 → 사이트의 비상 종류
+const TYPE_MAP = {
+  지진: 'earthquake',
+  지진해일: 'tsunami',
+  민방공: 'war',
+  화생방사고: 'cbrn',
+  방사능: 'cbrn',
+  산사태: 'landslide',
+  산불: 'fire',
+  화재: 'fire',
+  호우: 'flood',
+  홍수: 'flood',
+  태풍: 'flood',
+  폭염: 'heat',
+  한파: 'cold',
+  대설: 'cold',
+  정전: 'blackout',
+  감염병: 'pandemic',
+};
+
+// 줄임말로 적은 지역 (재난문자에는 정식 이름이 나온다)
+const REGION_ALIASES = { 충북: '충청북도', 충남: '충청남도', 경북: '경상북도', 경남: '경상남도' };
+
+/** 관리자 설정. 문서가 없으면 켜짐 · 전국 · 2급 끔. */
+export function disasterSettings(doc) {
+  const regions = Array.isArray(doc?.regions)
+    ? doc.regions.filter((s) => typeof s === 'string' && s.trim()).map((s) => s.trim()).slice(0, 20)
+    : [];
+  return { enabled: doc?.enabled !== false, regions, level2: doc?.level2 === true };
+}
+
+/** 한국 시각 기준 날짜 "YYYYMMDD" */
+export function kstDate(ms) {
+  return new Date(ms + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/** "2026/10/28 13:47:38" (한국 시각) → 밀리초 */
+export function parseKst(s) {
+  const m = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2}):(\d{2})/.exec(String(s || ''));
+  if (!m) return NaN;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4] - 9, +m[5], +m[6]);
+}
+
+function words(region) {
+  return region.split(/\s+/).filter(Boolean).map((w) => REGION_ALIASES[w] || w);
+}
+
+/** 두 지역 중 하나가 다른 하나를 포함하는가. 낱말마다 앞부분이 같으면 같은 곳으로 본다 ("경기 수원" = "경기도 수원시"). */
+function overlaps(a, b) {
+  const x = words(a);
+  const y = words(b);
+  const n = Math.min(x.length, y.length);
+  if (!n) return false;
+  for (let i = 0; i < n; i++) if (!x[i].startsWith(y[i]) && !y[i].startsWith(x[i])) return false;
+  return true;
+}
+
+/** 수신 지역 "경기도 전체 ,서울특별시 광진구 " → ["경기도", "서울특별시 광진구"] */
+export function messageRegions(s) {
+  return String(s || '').split(',').map((r) => r.trim().replace(/\s*전체$/, '').trim()).filter(Boolean);
+}
+
+/** 설정한 지역이 없으면 전국. */
+export function regionMatches(rgn, regions) {
+  if (!regions.length) return true;
+  return messageRegions(rgn).some((r) => regions.some((s) => overlaps(r, s)));
+}
+
+export function isDrill(text) {
+  return /훈련/.test(text) && !/훈련(이)?\s*아닙|훈련\s*아님|실제\s*상황/.test(text);
+}
+
+export function isAllClear(text) {
+  return /해제|일상으로\s*복귀|상황\s*종료|오인/.test(text);
+}
+
+/** 재난문자 하나를 판단한다. 울릴 문자가 아니면 null. */
+export function classifyMessage(m, settings) {
+  const step = m.EMRG_STEP_NM;
+  const kind = m.DST_SE_NM || '';
+  let level = null;
+  if (step === '위급재난' || (step === '긴급재난' && CRITICAL_TYPES.includes(kind))) level = 'real';
+  else if (step === '긴급재난' && settings.level2) level = 'alert';
+  if (!level) return null;
+  const text = String(m.MSG_CN || '').trim();
+  if (!text || isDrill(text) || isAllClear(text)) return null;
+  if (!regionMatches(m.RCPTN_RGN_NM, settings.regions)) return null;
+  return {
+    level,
+    type: TYPE_MAP[kind] || (level === 'real' ? 'disaster' : 'other'),
+    sn: Number(m.SN) || 0,
+    step,
+    kind,
+    text,
+    region: messageRegions(m.RCPTN_RGN_NM).join(', '),
+  };
+}
+
+/** lastSn 이후의 새 문자 중 울릴 문자 하나 (1급 우선, 같은 단계면 가장 최근). */
+export function pickHit(items, lastSn, now, settings) {
+  let best = null;
+  for (const m of items) {
+    const sn = Number(m.SN) || 0;
+    if (sn <= lastSn) continue;
+    const at = parseKst(m.CRT_DT);
+    if (!(now - at <= MAX_AGE_MS)) continue;
+    const hit = classifyMessage(m, settings);
+    if (!hit) continue;
+    if (!best || (hit.level === 'real' && best.level !== 'real') || (hit.level === best.level && hit.sn > best.sn)) best = hit;
+  }
+  return best;
+}
+
+/** 최근 30분 안팎의 재난문자 목록. 키가 틀리거나 서비스가 멈추면 오류. */
+export async function fetchDisasterMessages(key, now, fetchImpl = fetch) {
+  const rows = 1000;
+  const get = async (page) => {
+    const q = new URLSearchParams({
+      serviceKey: key, returnType: 'json', pageNo: String(page), numOfRows: String(rows), crtDt: kstDate(now - MAX_AGE_MS),
+    });
+    const res = await fetchImpl(`${DISASTER_API}?${q}`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`재난문자 서버 오류 (${res.status})`);
+    const data = await res.json().catch(() => null);
+    const code = data?.header?.resultCode;
+    if (code !== '00') throw new Error(`재난문자 조회 실패: ${data?.header?.errorMsg || data?.header?.resultMsg || code || '응답 없음'}`);
+    return data;
+  };
+  const first = await get(1);
+  const total = Number(first.totalCount) || 0;
+  const pages = Math.ceil(total / rows);
+  if (pages <= 1) return first.body || [];
+  // 오래된 것부터 나오므로 마지막 두 쪽에 최근 문자가 있다.
+  const tail = await Promise.all([pages - 1, pages].filter((p) => p > 1).map(get));
+  return [...(pages === 2 ? first.body || [] : []), ...tail.flatMap((d) => d.body || [])];
+}

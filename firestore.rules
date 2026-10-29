@@ -467,6 +467,26 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---------- 정부 긴급재난문자 자동 경보 ----------
+    // 설정은 관리자만 바꾼다. 확인 결과(disasterFeed)는 알림 서버(Worker)가 서비스 계정으로 남긴다(규칙을 거치지 않음).
+    match /config/disasterAlerts {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['enabled', 'regions', 'level2', 'updatedBy', 'updatedByName', 'updatedAt'])
+        && request.resource.data.enabled is bool
+        && request.resource.data.level2 is bool
+        && request.resource.data.regions is list && request.resource.data.regions.size() <= 20
+        && request.resource.data.updatedBy == request.auth.uid
+        && str(request.resource.data.updatedByName, 40)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /config/disasterFeed {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // ---------- 관리 기록 (관리자 작업, 알림 발송 결과) ----------
     // 관리자 화면이 남기는 기록. 알림 발송 결과는 Worker가 서비스 계정으로 남긴다(규칙을 거치지 않음).
 

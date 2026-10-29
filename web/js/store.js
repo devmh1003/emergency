@@ -205,6 +205,24 @@ export async function hasAckedAlarmTest(uid, testId) {
   }
 }
 
+// ---------- 정부 긴급재난문자 자동 경보 ----------
+// 알림 서버가 1분마다 재난문자를 확인해 전쟁·지진 같은 위급 문자면 1급 비상을 자동 선언한다.
+// 설정(config/disasterAlerts)은 관리자가 바꾸고, 확인 결과(config/disasterFeed)는 알림 서버가 남긴다.
+
+export const watchDisasterSettings = (cb, onError) => watchDoc(['config', 'disasterAlerts'], cb, onError);
+export const watchDisasterFeed = (cb, onError) => watchDoc(['config', 'disasterFeed'], cb, onError);
+
+export async function saveDisasterSettings(me, { enabled, regions, level2 }) {
+  const batch = writeBatch(db);
+  batch.set(ref('config', 'disasterAlerts'), {
+    enabled, level2, regions: regions.slice(0, 20), updatedBy: me.id, updatedByName: me.name, updatedAt: serverTimestamp(),
+  });
+  addAudit(batch, 'disaster.settings', {
+    detail: `${enabled ? '켬' : '끔'} · ${regions.length ? regions.join(', ') : '전국'}${level2 ? ' · 2급 알림 받음' : ''}`,
+  });
+  await batch.commit();
+}
+
 // ---------- 관리 기록 ----------
 
 // 관리 기록에 남길 "누가". 앱이 로그인한 가족 정보를 넣어 준다.

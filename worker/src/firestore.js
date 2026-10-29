@@ -24,14 +24,71 @@ export function fromDocument(doc) {
   return { id: doc.name.split('/').pop(), updateTime: doc.updateTime, ...fromFields(doc.fields) };
 }
 
+/** JS 값 → Firestore 값. 문자열, 숫자, 참/거짓, Date(타임스탬프), 문자열 목록, null. */
+export function toValue(v) {
+  if (v == null) return { nullValue: null };
+  if (v instanceof Date) return { timestampValue: v.toISOString().replace('.000Z', 'Z') };
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (Number.isInteger(v)) return { integerValue: String(v) };
+  if (typeof v === 'number') return { doubleValue: v };
+  if (Array.isArray(v)) return { arrayValue: { values: v.map(toValue) } };
+  return { stringValue: String(v) };
+}
+
+export function toFields(data) {
+  const fields = {};
+  for (const [k, v] of Object.entries(data)) if (v !== undefined) fields[k] = toValue(v);
+  return fields;
+}
+
+/** 자동 문서 id (Firestore 와 같은 20자 영숫자) */
+export function autoId() {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+}
+
 export class Firestore {
   constructor(projectId, getToken) {
-    this.base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+    this.root = `projects/${projectId}/databases/(default)/documents`;
+    this.base = `https://firestore.googleapis.com/v1/${this.root}`;
     this.getToken = getToken;
   }
 
+  /** 여러 문서를 요청 한 번에 읽는다. 없는 문서는 null. 순서는 paths 와 같다. */
+  async batchGet(paths) {
+    const res = await this.request(':batchGet', {
+      method: 'POST',
+      body: JSON.stringify({ documents: paths.map((p) => `${this.root}/${p}`) }),
+    });
+    if (!res.ok) throw new Error(`Firestore 읽기 실패 (${res.status})`);
+    const byName = new Map();
+    for (const r of await res.json()) if (r.found) byName.set(r.found.name, fromDocument(r.found));
+    return paths.map((p) => byName.get(`${this.root}/${p}`) || null);
+  }
+
+  /**
+   * 여러 문서를 한 번에(모두 되거나 모두 안 되게) 쓴다.
+   * writes: [{ path, data, mask?: 필드 목록(목록에 있는데 data 에 없으면 지운다), updateTime?, exists? }]
+   */
+  async commit(writes) {
+    const res = await this.request(':commit', {
+      method: 'POST',
+      body: JSON.stringify({
+        writes: writes.map((w) => ({
+          update: { name: `${this.root}/${w.path}`, fields: toFields(w.data) },
+          ...(w.mask ? { updateMask: { fieldPaths: w.mask } } : {}),
+          ...(w.updateTime ? { currentDocument: { updateTime: w.updateTime } }
+            : w.exists === false ? { currentDocument: { exists: false } } : {}),
+        })),
+      }),
+    });
+    return res.ok;
+  }
+
   async request(path, init = {}) {
-    const res = await fetch(`${this.base}/${path}`, {
+    // ":batchGet", ":commit" 은 documents 바로 뒤에 붙는다 (…/documents:commit)
+    const res = await fetch(path.startsWith(':') ? `${this.base}${path}` : `${this.base}/${path}`, {
       ...init,
       headers: { Authorization: `Bearer ${await this.getToken()}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
     });

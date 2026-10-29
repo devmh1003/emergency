@@ -88,6 +88,11 @@
    npx wrangler deploy
    ```
 5. 나온 주소(`https://family-emergency.○○○.workers.dev`)를 `config.js`의 `workerUrl` 에 넣습니다.
+6. (선택) **정부 긴급재난문자 자동 경보**: [재난안전데이터공유플랫폼](https://www.safetydata.go.kr)에서 "긴급재난문자" API(DSSP-IF-00247) 활용 신청 → 받은 인증키를 비밀 변수로 등록합니다.
+   ```bash
+   npx wrangler secret put SAFETY_DATA_KEY
+   ```
+   Worker가 1분마다 재난문자를 확인해, 위급재난(공습·경계경보 등)과 지진·지진해일·민방공 긴급재난 문자가 우리 지역에 오면 1급 비상을 자동 선언합니다. 지역과 켜기/끄기는 관리자 설정 → **📡 정부 재난문자 자동 경보**에서 정합니다.
 
 ### 3. GitHub Pages
 

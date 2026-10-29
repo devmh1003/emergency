@@ -2,8 +2,10 @@
 // 기록은 맨 아래에 최근 몇 줄만 보여주고, 전체는 관리자 기록 화면에서 본다.
 import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
 import { errorMessage } from '../firebase.js';
-import { createMember, updateMember, watchEmergencyLog } from '../store.js';
-import { emergencyLogTitle, formatDateTime } from '../logic.js';
+import {
+  createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
+} from '../store.js';
+import { emergencyLogTitle, formatDateTime, toDate } from '../logic.js';
 import { t } from '../i18n.js';
 import { emergencyControl, testPanel } from './emergency.js';
 import { statusSummary, familyStatusList } from './family.js';
@@ -67,6 +69,79 @@ function memberTable(state) {
   ]));
 }
 
+// 알림 서버는 1분마다 확인한다. 이보다 오래 소식이 없으면 멈춘 것으로 본다.
+const FEED_STALE_MS = 5 * 60 * 1000;
+
+function feedStatus(feed) {
+  if (!feed?.checkedAt) {
+    return alertBox('warning', null, h('p', null, t('알림 서버가 아직 재난문자를 확인하지 않았습니다. 재난문자 인증키를 알림 서버에 등록하면 1분 안에 시작합니다.')));
+  }
+  const at = toDate(feed.checkedAt);
+  if (feed.error) {
+    return alertBox('error', null, h('p', null, t('재난문자를 받아 오지 못했습니다 ({time}): {error}', { time: formatDateTime(at), error: feed.error })));
+  }
+  if (!at || Date.now() - at.getTime() > FEED_STALE_MS) {
+    return alertBox('warning', null, h('p', null, t('최근 5분 동안 재난문자를 확인하지 않았습니다. 마지막 확인: {time}', { time: formatDateTime(at) })));
+  }
+  return alertBox('success', null, h('p', null, t('정상 작동 중 · 마지막 확인 {time}', { time: formatDateTime(at) })));
+}
+
+function lastHit(feed) {
+  if (!feed?.lastHitAt) return h('p', { class: 'muted small' }, t('아직 자동 경보가 울린 적이 없습니다.'));
+  const level = feed.lastHitLevel === 'alert' ? t('2급') : t('1급');
+  const action = feed.lastHitAction === 'skip' ? t('이미 비상 중이라 새로 선언하지 않음') : t('자동 선언');
+  return h('div', { class: 'small' },
+    h('p', null, h('strong', null, t('마지막 자동 경보')), ` · ${formatDateTime(feed.lastHitAt)} · ${level} · ${feed.lastHitKind || ''} · ${action}`),
+    feed.lastHitRegion ? h('p', { class: 'muted' }, feed.lastHitRegion) : null,
+    h('p', null, feed.lastHitText || ''));
+}
+
+/** 정부 긴급재난문자 자동 경보: 켜기·지역·2급 알림, 알림 서버의 확인 상태 */
+function disasterPanel(state, unsubs) {
+  const enabled = h('input', { type: 'checkbox', name: 'enabled', checked: true });
+  const regions = h('input', { name: 'regions', maxlength: 300, placeholder: t('예: 서울, 경기 수원') });
+  const level2 = h('input', { type: 'checkbox', name: 'level2' });
+  const saved = h('p', { class: 'muted small' });
+  const status = h('div', null, h('p', { class: 'muted small' }, t('불러오는 중…')));
+  const hit = h('div');
+
+  const form = h('form', { class: 'stack' },
+    h('label', { class: 'check' }, enabled, h('span', null, h('strong', null, t('재난문자로 자동 경보 켜기')))),
+    field(t('우리 가족 지역'), regions, t('쉼표로 여러 곳을 적습니다. 비워 두면 전국 어디의 재난문자로도 울립니다.')),
+    h('label', { class: 'check' }, level2, h('span', null, t('그 밖의 긴급재난(호우·산불 대피 등)은 2급 알림으로 받기'))),
+    h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', type: 'submit' }, t('저장'))),
+    saved);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const list = regions.value.split(/[,，]/).map((r) => r.trim().slice(0, 40)).filter(Boolean).slice(0, 20);
+    busy(form.querySelector('button[type=submit]'), async () => {
+      try {
+        await saveDisasterSettings(state.me, { enabled: enabled.checked, regions: list, level2: level2.checked });
+        toast(t('저장했습니다.'));
+      } catch (err) { toast(errorMessage(err), 'error'); }
+    });
+  });
+
+  unsubs.push(watchDisasterSettings((doc) => {
+    enabled.checked = doc?.enabled !== false;
+    level2.checked = doc?.level2 === true;
+    if (document.activeElement !== regions) regions.value = (doc?.regions || []).join(', ');
+    saved.textContent = doc?.updatedAt ? t('{name} · {time} 저장', { name: doc.updatedByName || '', time: formatDateTime(doc.updatedAt) }) : '';
+  }, () => {}));
+  unsubs.push(watchDisasterFeed((feed) => {
+    status.replaceChildren(feedStatus(feed));
+    hit.replaceChildren(lastHit(feed));
+  }, () => status.replaceChildren(h('p', { class: 'muted small' }, t('상태를 불러오지 못했습니다.')))));
+
+  return panel(t('📡 정부 재난문자 자동 경보'), null,
+    h('p', { class: 'small' }, t('행정안전부 긴급재난문자를 1분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.')),
+    h('p', { class: 'muted small' }, t('안전안내 문자, 훈련 안내, 해제 안내로는 울리지 않습니다. 이미 비상 중이면 새로 선언하지 않고, 해제는 관리자가 직접 합니다.')),
+    status,
+    form,
+    h('h3', { class: 'panel-subhead' }, t('최근 자동 경보')),
+    hit);
+}
+
 const SHORTCUTS = [
   ['#/admin/meet', '📍', '집합장소 설정', '1~10순위 장소와 시간'],
   ['#/admin/protocols', '📘', '대처법 관리', '내용·체크리스트 편집'],
@@ -103,6 +178,8 @@ export function adminHubView({ state, live, onChange }) {
           statusSummary(state),
           familyStatusList(state, { compact: true }))
         : null))),
+
+    disasterPanel(state, unsubs),
 
     tests,
 

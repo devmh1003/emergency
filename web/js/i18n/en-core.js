@@ -59,6 +59,7 @@ export const EN = {
   '해제 알림 발송': 'All-clear notification sent',
   '테스트 알림 발송': 'Test notification sent',
   '테스트 알람 발송': 'Test alarm sent',
+  '재난문자 자동 경보 설정': 'Emergency alert auto-alarm settings',
 
   // ---------- logic.js: 비상 기록 제목·타임라인 ----------
   '비상 해제': 'Emergency ended',
