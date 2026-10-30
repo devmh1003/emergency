@@ -6,7 +6,7 @@ import {
 import {
   db, auth, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
 } from './firebase.js';
-import { DEFAULT_PROTOCOLS } from './data/protocols.js';
+import { DEFAULT_PROTOCOLS, RETIRED_PROTOCOL_IDS } from './data/protocols.js';
 import { SUPPLY_PRESETS } from './logic.js';
 import { t } from './i18n.js';
 
@@ -304,7 +304,10 @@ export const watchAllMeetingLogs = (cb, onError, max = 300) => watchCollection('
 // ---------- 가족 관리 (관리자) ----------
 
 const MEMBER_FIELDS = ['name', 'phone', 'role', 'active', 'declareCredits', 'order', 'links'];
-const PROFILE_FIELDS = ['gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact'];
+const PROFILE_FIELDS = ['gender', 'birthDate', 'email', 'address', 'emergencyContact'];
+// 더 이상 받지 않는 건강 정보. 저장할 때마다 지워서 보안 규칙(허용 키 목록)에 걸리지 않게 한다.
+const RETIRED_PROFILE_FIELDS = ['bloodType', 'medical'];
+const retiredFieldsRemoved = () => Object.fromEntries(RETIRED_PROFILE_FIELDS.map((k) => [k, deleteField()]));
 
 function pick(obj, keys) {
   const out = {};
@@ -513,7 +516,7 @@ export async function updateMember(uid, form, targetName = form.name, before = n
     }
   }
   batch.set(ref('members', uid), { ...pick(form, MEMBER_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
-  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
+  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), ...retiredFieldsRemoved(), updatedAt: serverTimestamp() }, { merge: true });
   let action = 'member.update';
   if (Object.keys(form).length === 1 && 'active' in form) action = form.active ? 'member.activate' : 'member.deactivate';
   else if (Object.keys(form).length === 1 && 'declareCredits' in form) action = 'member.credit';
@@ -526,8 +529,35 @@ export async function updateMember(uid, form, targetName = form.name, before = n
 export async function updateMyInfo(uid, form) {
   const batch = writeBatch(db);
   batch.update(ref('members', uid), { phone: form.phone, updatedAt: serverTimestamp() });
-  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
+  batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), ...retiredFieldsRemoved(), updatedAt: serverTimestamp() }, { merge: true });
   return commitWithTimeout(batch.commit());
+}
+
+/**
+ * 예전 버전이 저장한 건강 정보(혈액형, 의료 메모)와 응급처치 대처법을 지운다. 앱이 열릴 때 한 번 부른다.
+ * 본인 것은 누구나, 모든 가족 것과 대처법은 관리자가. 인터넷이 없으면 다음에 다시 한다. 지운 것이 있으면 true.
+ */
+export async function scrubRetiredData(uid, isAdmin) {
+  let removed = false;
+  const scrubProfile = async (id, p) => {
+    if (!RETIRED_PROFILE_FIELDS.some((k) => k in p)) return;
+    await setDoc(ref('profiles', id), { ...retiredFieldsRemoved(), updatedAt: serverTimestamp() }, { merge: true });
+    removed = true;
+  };
+  if (isAdmin) {
+    for (const p of await listCollection('profiles')) await scrubProfile(p.id, p);
+    for (const id of RETIRED_PROTOCOL_IDS) {
+      if (!(await getDoc(ref('protocols', id))).exists()) continue;
+      const batch = writeBatch(db);
+      batch.delete(ref('protocols', id));
+      addAudit(batch, 'protocol.delete', { target: id, detail: '제공을 중단한 대처법 삭제' });
+      await batch.commit();
+      removed = true;
+    }
+  } else {
+    await scrubProfile(uid, await getProfile(uid));
+  }
+  return removed;
 }
 
 /** 가족 삭제: 데이터 접근을 먼저 끊고(members 삭제, 이름 목록에서 뺌), 로그인 계정은 Worker가 지운다. */

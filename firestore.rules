@@ -242,20 +242,19 @@ service cloud.firestore {
     }
 
     function validProfile(d) {
-      return d.keys().hasOnly(['loginId', 'gender', 'birthDate', 'bloodType', 'email', 'address', 'medical', 'emergencyContact', 'updatedAt'])
+      // 혈액형(bloodType)·의료 메모(medical)는 더 이상 받지 않는다 (Play 건강 앱 규정).
+      return d.keys().hasOnly(['loginId', 'gender', 'birthDate', 'email', 'address', 'emergencyContact', 'updatedAt'])
         && optStr(d, 'loginId', 30)
         && optStr(d, 'gender', 10)
         && optStr(d, 'birthDate', 10)
-        && optStr(d, 'bloodType', 10)
         && optStr(d, 'email', 120)
         && optStr(d, 'address', 200)
-        && optStr(d, 'medical', 500)
         && optStr(d, 'emergencyContact', 100)
         && (!('updatedAt' in d) || d.updatedAt is timestamp);
     }
 
     match /profiles/{uid} {
-      // 비상시 필요한 정보(혈액형, 의료 메모 등)는 지정된 가족도 본다.
+      // 비상시 필요한 정보(비상연락처, 주소 등)는 지정된 가족도 본다.
       allow get: if isAdmin() || (isSelf(uid) && isMember()) || isLinked(uid);
       allow list: if isAdmin();
       // 로그인 아이디 기록은 관리자만 바꾼다 (본인이 바꾸면 관리자가 엉뚱한 아이디를 안내하게 된다).

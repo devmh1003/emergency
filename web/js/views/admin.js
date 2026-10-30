@@ -8,7 +8,7 @@ import {
 import { getBestPosition } from '../geo.js';
 import { mapView } from '../map.js';
 import {
-  BLOOD_TYPES, GENDERS, formatOffset, scheduleWarnings, toLocalInput, toDate, parseSteps, stepsToText,
+  GENDERS, formatOffset, scheduleWarnings, toLocalInput, toDate, parseSteps, stepsToText,
   parseChecklist, hasLocation,
 } from '../logic.js';
 import { t } from '../i18n.js';
@@ -34,12 +34,9 @@ export function memberEditView({ state, params, navigate }) {
       h('div', { class: 'field-row' },
         field(t('성별'), select('gender', ['', ...GENDERS].map((g) => ({ value: g, label: g ? t(g) : t('선택 안 함') })), p.gender || '')),
         field(t('생년월일'), h('input', { name: 'birthDate', type: 'date', value: p.birthDate || '' }), t('나이는 자동으로 계산됩니다'))),
-      h('div', { class: 'field-row' },
-        field(t('혈액형'), select('bloodType', ['', ...BLOOD_TYPES].map((b) => ({ value: b, label: b ? t(b) : t('선택 안 함') })), p.bloodType || '')),
-        field(t('이메일 (연락용)'), h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' }))),
+      field(t('이메일 (연락용)'), h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' })),
       field(t('집주소'), h('input', { name: 'address', maxlength: 200, value: p.address || '', autocomplete: 'off' })),
-      field(t('비상연락처 (가족 외)'), h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '', placeholder: t('예: 이모 010-0000-0000') })),
-      field(t('의료 메모'), h('textarea', { name: 'medical', rows: 3, maxlength: 500, value: p.medical || '', placeholder: t('지병, 복용약, 알레르기') })));
+      field(t('비상연락처 (가족 외)'), h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '', placeholder: t('예: 이모 010-0000-0000') })));
   };
   if (isNew) fillProfile();
   else getProfile(m.id).then(fillProfile).catch((err) => profileFields.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
@@ -95,11 +92,9 @@ export function memberEditView({ state, params, navigate }) {
       links: linkBoxes.filter((b) => b.checked).map((b) => b.value).slice(0, MAX_LINKS),
       gender: d.gender,
       birthDate: d.birthDate,
-      bloodType: d.bloodType,
       email: d.email,
       address: d.address,
       emergencyContact: d.emergencyContact,
-      medical: d.medical,
     };
     const taken = state.members.some((x) => x.id !== m?.id && x.name === data.name);
     if (taken) { toast(t('같은 이름의 가족이 이미 있습니다. 로그인 목록에서 구분되도록 다르게 적어 주세요.'), 'error'); return; }

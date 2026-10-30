@@ -247,7 +247,7 @@ export function adminHubView({ state, live, onChange }) {
     panel(t('👪 가족 등록·관리'), { href: '#/family', label: t('가족 현황') },
       h('h3', { class: 'panel-subhead' }, t('가족 등록')),
       quickAddForm(state),
-      h('p', { class: 'muted small' }, t('등록하면 바로 로그인 목록에 이름이 올라갑니다. 가족에게는 가족 코드를 알려 주세요. 혈액형·주소 같은 개인정보와 "볼 수 있는 가족"은 수정에서 넣습니다.')),
+      h('p', { class: 'muted small' }, t('등록하면 바로 로그인 목록에 이름이 올라갑니다. 가족에게는 가족 코드를 알려 주세요. 주소·비상연락처 같은 개인정보와 "볼 수 있는 가족"은 수정에서 넣습니다.')),
       h('h3', { class: 'panel-subhead' }, t('등록된 가족')),
       live(() => memberTable(state)),
       h('p', { class: 'small' }, h('a', { href: '#/admin/member/new' }, t('개인정보까지 한 번에 입력해서 추가하기 →')))),

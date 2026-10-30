@@ -146,8 +146,6 @@ export function memberDetailView({ state, params, live, navigate }) {
       fullAccess && p.loginId ? infoRow(t('로그인 아이디'), p.loginId) : null,
       infoRow(t('성별'), p.gender ? t(p.gender) : p.gender),
       infoRow(t('나이'), age != null ? t('{age}세 ({birth})', { age, birth: p.birthDate }) : p.birthDate),
-      infoRow(t('혈액형'), p.bloodType ? t(p.bloodType) : p.bloodType),
-      infoRow(t('의료 메모'), p.medical),
       infoRow(t('비상연락처'), p.emergencyContact),
       infoRow(t('집주소'), p.address),
       infoRow(t('이메일'), p.email)].filter(Boolean));

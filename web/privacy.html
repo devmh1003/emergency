@@ -19,7 +19,7 @@
   <h2>1. 수집하는 정보</h2>
   <ul>
     <li><strong>가족 정보</strong>: 이름, 전화번호, 권한(가족·관리자). 관리자가 등록합니다.</li>
-    <li><strong>선택 개인정보</strong>: 성별, 생년월일, 혈액형, 이메일, 주소, 비상연락처, 의료 메모. 본인이나 관리자가 넣었을 때만 저장됩니다.</li>
+    <li><strong>선택 개인정보</strong>: 성별, 생년월일, 이메일, 주소, 비상연락처. 본인이나 관리자가 넣었을 때만 저장됩니다. 건강 정보(혈액형, 의료 메모)는 받지 않습니다.</li>
     <li><strong>위치</strong>: 생존신고·도움 요청·체크포인트를 남길 때의 위치(위도·경도·정확도)와 시각. 본인이 신고 버튼을 누를 때만 저장되며, 계속 따라다니며 기록하지 않습니다. 집합장소까지의 거리·방향 계산은 휴대폰 안에서만 합니다.</li>
     <li><strong>도움 요청</strong>: 도움 요청을 누르면 메모와 위치가 관리자와 관련 가족의 휴대폰 알림으로 가고, 문자 앱에 같은 내용이 채워집니다(보내기는 본인이 누릅니다).</li>
     <li><strong>기록</strong>: 생존신고, 비상 선언·해제, 테스트 알람 확인, 집합장소 게시판 글, 관리자 작업 기록.</li>
@@ -67,7 +67,7 @@
   <div lang="en">
     <p>Family Emergency is a private service run by one family so its members can check on each other and meet again in an emergency. Only people registered by the family admin can sign in with the access code. Nothing is used for advertising or sold.</p>
     <ul>
-      <li><strong>Data</strong>: name and phone number; optional personal details (gender, birth date, blood type, email, address, emergency contact, medical notes); the location and time of a safety check-in or help request, saved only when you tap the button (a help request also notifies the admins and related family with your note and location); check-in, emergency and admin records; push notification tokens (including the Firebase installation ID) and the sign-in user ID; for wrong access codes, a hash of the internet address and device ID, the start of the address, the count and time, kept to block sign-in for a day after 3 wrong tries.</li>
+      <li><strong>Data</strong>: name and phone number; optional personal details (gender, birth date, email, address, emergency contact; no health information is collected); the location and time of a safety check-in or help request, saved only when you tap the button (a help request also notifies the admins and related family with your note and location); check-in, emergency and admin records; push notification tokens (including the Firebase installation ID) and the sign-in user ID; for wrong access codes, a hash of the internet address and device ID, the start of the address, the count and time, kept to block sign-in for a day after 3 wrong tries.</li>
       <li><strong>Purpose</strong>: sending emergency alerts, showing family safety status and last location, meeting point guidance, admin records.</li>
       <li><strong>Who can see it</strong>: you, the family admins, and up to three family members the admin chooses, enforced by server security rules. Nothing is shared outside the family.</li>
       <li><strong>Processors</strong>: Google Firebase (storage, sign-in, notifications), Cloudflare Workers (sending notifications, checking access codes), GitHub Pages (site files only), OpenStreetMap (map images). Public emergency alert texts are read from the Korean Ministry of the Interior and Safety data platform (safetydata.go.kr); no family data is sent there. This is a personal app, not affiliated with any government agency.</li>

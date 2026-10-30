@@ -1,7 +1,7 @@
 // 앱 시작점: 로그인 상태 확인, 실시간 데이터 구독, 화면 전환, 머리말·메뉴·바닥글.
 import { isConfigured, watchAuth, config, logout } from './firebase.js';
 import { h, mount, toast, savedFontScale, ask } from './dom.js';
-import { DEFAULT_PROTOCOLS } from './data/protocols.js';
+import { DEFAULT_PROTOCOLS, RETIRED_PROTOCOL_IDS } from './data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from './data/protocols.en.js';
 import { t, lang } from './i18n.js';
 import { maybeAutoPrepare, prepareOffline } from './offline.js';
@@ -57,12 +57,13 @@ export const state = {
     // 영어 화면: 기본 대처법은 영어판을 쓰고, 관리자가 따로 추가한 대처법만 서버 것을 붙인다.
     // 한국어: 서버 대처법이 우선이고, 서버에 없는 기본 대처법(새로 추가된 것)은 뒤에 붙인다.
     let list;
+    const server = this.serverProtocols.filter((p) => !RETIRED_PROTOCOL_IDS.includes(p.id));
     if (lang === 'en') {
       const builtIn = new Set(DEFAULT_PROTOCOLS_EN.map((p) => p.id));
-      list = [...DEFAULT_PROTOCOLS_EN, ...this.serverProtocols.filter((p) => !builtIn.has(p.id))];
+      list = [...DEFAULT_PROTOCOLS_EN, ...server.filter((p) => !builtIn.has(p.id))];
     } else {
-      const onServer = new Set(this.serverProtocols.map((p) => p.id));
-      list = [...this.serverProtocols, ...DEFAULT_PROTOCOLS.filter((p) => !onServer.has(p.id))];
+      const onServer = new Set(server.map((p) => p.id));
+      list = [...server, ...DEFAULT_PROTOCOLS.filter((p) => !onServer.has(p.id))];
     }
     return [...list].sort((a, b) => (a.order ?? 99) - (b.order ?? 99));
   },
@@ -453,6 +454,8 @@ function startSubscriptions(uid) {
         route();
         refreshPushToken(uid);
         takeNativeAck();
+        // 예전 버전이 저장한 건강 정보와 응급처치 대처법을 지운다 (Play 건강 앱 규정). 실패해도 앱은 그대로 쓴다.
+        if (state.online) store.scrubRetiredData(uid, state.isAdmin).catch((err) => console.warn('scrub', err));
       } else {
         route();
       }

@@ -644,7 +644,6 @@ export function randomDigits(length = 8) {
   return code;
 }
 
-export const BLOOD_TYPES =['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-', '모름'];
 export const GENDERS = ['남', '여', '기타'];
 export const EMERGENCY_TYPES = [
   { id: 'war', label: '전쟁·공습' },

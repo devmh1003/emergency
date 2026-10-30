@@ -50,8 +50,8 @@ beforeEach(async () => {
     await setDoc(doc(db, 'members/mom'), member('엄마', { links: ['kid'], last, updatedAt: Timestamp.now() }));
     await setDoc(doc(db, 'members/kid'), member('아이', { declareCredits: 0 }));
     await setDoc(doc(db, 'members/off'), member('비활성', { active: false }));
-    await setDoc(doc(db, 'profiles/mom'), { bloodType: 'A+', address: '서울' });
-    await setDoc(doc(db, 'profiles/kid'), { bloodType: 'O+' });
+    await setDoc(doc(db, 'profiles/mom'), { address: '서울' });
+    await setDoc(doc(db, 'profiles/kid'), { emergencyContact: '이모 010-0000-0000' });
     await setDoc(doc(db, 'emergency/current'), {
       active: false, level: 'real', type: 'war', message: '지난 비상', declaredBy: 'admin', declaredByName: '아빠', declaredAt: Timestamp.now(),
       realAt: Timestamp.now(), escalatedBy: 'admin', escalatedByName: '아빠', endedBy: 'admin', endedByName: '아빠', endedAt: Timestamp.now(),
@@ -168,8 +168,11 @@ test('가족 추가·삭제는 관리자만, 관리자는 자신을 지울 수 �
 });
 
 test('민감 정보는 본인과 관리자만 쓸 수 있다', async () => {
-  await assertSucceeds(setDoc(doc(as('mom'), 'profiles/mom'), { bloodType: 'B+' }, { merge: true }));
-  await assertFails(setDoc(doc(as('mom'), 'profiles/kid'), { bloodType: 'B+' }, { merge: true }));
+  await assertSucceeds(setDoc(doc(as('mom'), 'profiles/mom'), { emergencyContact: '삼촌 010-1111-2222' }, { merge: true }));
+  await assertFails(setDoc(doc(as('mom'), 'profiles/kid'), { emergencyContact: '삼촌 010-1111-2222' }, { merge: true }));
+  // 건강 정보는 더 이상 저장할 수 없다 (Play 건강 앱 규정)
+  await assertFails(setDoc(doc(as('mom'), 'profiles/mom'), { bloodType: 'B+' }, { merge: true }));
+  await assertFails(setDoc(doc(as('admin'), 'profiles/kid'), { medical: '천식' }, { merge: true }));
   await assertSucceeds(setDoc(doc(as('admin'), 'profiles/kid'), { address: '부산' }, { merge: true }));
   await assertFails(setDoc(doc(as('mom'), 'profiles/mom'), { password: 'x' }, { merge: true }));
 });
@@ -565,7 +568,7 @@ test('체크리스트 값은 참/거짓만', async () => {
 // ---------- 로그인 아이디·관리 기록·연락처 ----------
 
 test('로그인 아이디 기록은 관리자만 바꾼다', async () => {
-  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'profiles/mom'), { loginId: 'mom', bloodType: 'A+' }));
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'profiles/mom'), { loginId: 'mom', address: '서울' }));
   await assertSucceeds(setDoc(doc(as('mom'), 'profiles/mom'), { address: '부산' }, { merge: true }));
   await assertFails(setDoc(doc(as('mom'), 'profiles/mom'), { loginId: 'admin' }, { merge: true }));
   await assertSucceeds(setDoc(doc(as('admin'), 'profiles/mom'), { loginId: 'mom2' }, { merge: true }));

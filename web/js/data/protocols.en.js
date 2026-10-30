@@ -39,7 +39,7 @@ export const DEFAULT_PROTOCOLS_EN = [
       { id: 'b4', text: 'I have walked the route to meeting places #1–#3 myself' },
       { id: 'b5', text: 'I know where the nearest civil defense shelter is (Safety Didimdol app)' },
       { id: 'b6', text: 'I always keep a power bank charged' },
-      { id: 'b7', text: 'I registered my medical info (conditions, medications, allergies)' },
+      { id: 'b7', text: 'I registered an emergency contact outside the family and my home address' },
     ],
   },
   {
@@ -573,51 +573,6 @@ export const DEFAULT_PROTOCOLS_EN = [
     ]
   },
   // ---------- Practical survival (written for when the ambulance or rescue team is late) ----------
-  {
-    id: 'firstaid',
-    order: 2.1,
-    icon: '🩹',
-    title: 'First aid: bleeding, burns, fractures, cardiac arrest',
-    summary: 'Only what you can do with your hands, assuming the ambulance will be late.',
-    keyPoints: ['Bleeding: press a clean cloth hard for 10+ minutes — do not peek', 'Heavy limb bleeding: tourniquet, write down the time', 'Burns: 20 minutes under running tap water, no ice or toothpaste', 'Unresponsive and not breathing: 30 chest compressions + 2 breaths'],
-    steps: [
-      { phase: 'Bleeding', items: [
-        'Put a clean cloth (clothing if nothing else) on the wound and press hard with your palm for at least 10 minutes. If blood soaks through, do not lift it; add more on top.',
-        'If blood spurts from an arm or leg and pressure does not stop it, wrap a belt or cloth 5–7 cm above the wound (toward the heart), slide a stick in and twist until the bleeding stops. Write the time on the skin and do not loosen it until a hospital.',
-        'Do not pull out embedded objects (glass, metal). Pad around them with cloth so they cannot move.',
-        'Nosebleed: lean forward and pinch the soft part of the nose for 10 minutes. Do not tilt the head back.',
-      ] },
-      { phase: 'Burns', items: [
-        'Cool under lukewarm running tap water for 20 minutes. Ice, toothpaste, soybean paste and alcohol make it worse.',
-        'Do not peel off clothing stuck to the burn; cut around it. Take off rings and watches before swelling starts.',
-        'Do not pop blisters. Cover loosely with clean plastic wrap or a dry cloth.',
-        'Go to a hospital at once for burns bigger than a palm, burns on the face, joints or genitals, or breathing burns (singed nose hair, hoarse voice).',
-      ] },
-      { phase: 'Fractures and sprains', items: [
-        'Do not ask them to move it; splint it in the position you find it. Use newspaper, a magazine or a branch tied with cloth, and include the joints above and below the injury.',
-        'If the fingers or toes beyond the injury are white, cold or numb, a blood vessel is pinched. That person is the most urgent.',
-        'Sprain: cold pack for 20 minutes, raise it above the heart. If they cannot bear weight or it looks deformed, treat it as a fracture.',
-      ] },
-      { phase: 'Cardiac arrest', items: [
-        'If they do not respond when you tap their shoulders and call, and are not breathing or only gasping, call 119 and put it on speaker.',
-        'Put the heel of one hand in the centre of the chest (between the nipples), the other hand on top, arms straight, and press 5 cm deep at 100–120 per minute (the beat of "Baby Shark"). 30 compressions, then 2 breaths; if you cannot do breaths, keep compressing.',
-        'If there is an AED nearby, have someone fetch it and switch it on. Do what the machine says.',
-        'Swap with someone every 2 minutes if you can. Not stopping is what matters most.',
-      ] },
-      { phase: 'Choking, hypothermia, dehydration', items: [
-        'If they cannot speak and clutch their throat, stand behind them and pull your fist sharply inward and upward above the navel (Heimlich). For pregnant or large people, press the chest. Under 1 year old: face down, 5 back blows.',
-        'Shivering and slurred speech is hypothermia. Remove wet clothes and put something warm in the armpits, chest and groin. If shivering stops and they get sleepy, it is critical.',
-        'Dehydration (dark, scanty urine): mix half a teaspoon of salt and 6 teaspoons of sugar in 1 L of water and sip often.',
-      ] },
-    ],
-    checklist: [
-      { id: 'fa1', text: 'The first-aid kit has a pressure bandage (or a stack of pads/gauze), a belt for a tourniquet, scissors, gloves and a triangular bandage' },
-      { id: 'fa2', text: 'Someone in the family has taken a CPR course (Red Cross or fire station, free)' },
-      { id: 'fa3', text: 'We know the nearest AED at home and at work' },
-      { id: 'fa4', text: 'Everyone\'s conditions, medications and allergies are entered in this app' },
-      { id: 'fa5', text: 'We keep at least 2 weeks of prescription medicine on hand' },
-    ],
-  },
   {
     id: 'water',
     order: 2.2,

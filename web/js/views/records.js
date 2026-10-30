@@ -133,15 +133,13 @@ export function directoryView({ state, live }) {
       return;
     }
     box.replaceChildren(table(
-      [t('이름'), t('권한'), t('상태'), t('전화'), t('성별·나이'), t('혈액형'), t('의료 메모'), t('비상연락처'), t('주소'), t('마지막 신고'), t('대비'), t('볼 수 있는 가족')],
+      [t('이름'), t('권한'), t('상태'), t('전화'), t('성별·나이'), t('비상연락처'), t('주소'), t('마지막 신고'), t('대비'), t('볼 수 있는 가족')],
       list.map(({ m, p, age, prog, s }) => [
         h('a', { href: `#/member/${encodeURIComponent(m.id)}`, class: 'item-title' }, m.name),
         m.role === 'admin' ? t('관리자') : t('가족'),
         h('span', { class: `tag status-${s.key}` }, s.label),
         m.phone || '-',
         [p.gender ? t(p.gender) : '', age != null ? t('{age}세', { age }) : ''].filter(Boolean).join(' · ') || '-',
-        p.bloodType ? t(p.bloodType) : '-',
-        p.medical || '-',
         p.emergencyContact || '-',
         p.address || '-',
         m.last ? `${checkinLabel(m.last.type)} ${formatAgo(m.last.clientAt || m.last.at)}` : '-',
@@ -160,9 +158,9 @@ export function directoryView({ state, live }) {
     class: 'btn btn-outline',
     onClick: async () => {
       if (!(await ask(t('가족 개인정보가 담긴 파일을 내려받습니다. 파일은 안전한 곳에 보관하고, 다 쓰면 지우세요.')))) return;
-      const csv = toCsv([t('이름'), t('권한'), t('접근'), t('전화'), t('성별'), t('생년월일'), t('나이'), t('혈액형'), t('의료 메모'), t('비상연락처'), t('주소'), t('이메일'), t('대비율'), t('볼 수 있는 가족')],
+      const csv = toCsv([t('이름'), t('권한'), t('접근'), t('전화'), t('성별'), t('생년월일'), t('나이'), t('비상연락처'), t('주소'), t('이메일'), t('대비율'), t('볼 수 있는 가족')],
         rows().map(({ m, p, age, prog }) => [m.name, m.role === 'admin' ? t('관리자') : t('가족'), m.active ? t('허용') : t('차단'), m.phone, p.gender ? t(p.gender) : '',
-          p.birthDate || '', age ?? '', p.bloodType ? t(p.bloodType) : '', p.medical || '', p.emergencyContact || '', p.address || '', p.email || '', `${prog.percent}%`,
+          p.birthDate || '', age ?? '', p.emergencyContact || '', p.address || '', p.email || '', `${prog.percent}%`,
           (m.links || []).map(nameOf).join(' / ')]));
       downloadText(t('가족정보.csv'), csv);
     },

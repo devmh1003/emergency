@@ -11,7 +11,7 @@ import { standbyWanted, standbyActive, startStandby, stopStandby } from '../sire
 import { offlineStatus, prepareOffline } from '../offline.js';
 import { t } from '../i18n.js';
 import {
-  BLOOD_TYPES, GENDERS, CHECKIN_LABEL, formatDateTime, formatOffset, hasLocation, locationUrl, meetingSchedule,
+  GENDERS, CHECKIN_LABEL, formatDateTime, formatOffset, hasLocation, locationUrl, meetingSchedule,
   formatDms, CODE_KINDS, codeLabel, accessCodeProblem, randomDigits,
 } from '../logic.js';
 
@@ -133,13 +133,10 @@ function myInfoPanel(state) {
       h('div', { class: 'field-row' },
         field(t('성별'), select('gender', ['', ...GENDERS].map((g) => ({ value: g, label: g ? t(g) : t('선택 안 함') })), p.gender || '')),
         field(t('생년월일'), h('input', { name: 'birthDate', type: 'date', value: p.birthDate || '' }))),
-      h('div', { class: 'field-row' },
-        field(t('혈액형'), select('bloodType', ['', ...BLOOD_TYPES].map((b) => ({ value: b, label: b ? t(b) : t('선택 안 함') })), p.bloodType || '')),
-        field(t('이메일 (연락용)'), h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' }))),
+      field(t('이메일 (연락용)'), h('input', { name: 'email', type: 'email', maxlength: 120, value: p.email || '' })),
       field(t('집주소'), h('input', { name: 'address', maxlength: 200, value: p.address || '' })),
-      field(t('비상연락처 (가족 외)'), h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '' })),
-      field(t('의료 메모'), h('textarea', { name: 'medical', rows: 3, maxlength: 500, value: p.medical || '', placeholder: t('지병, 복용약, 알레르기') }),
-        t('비상시 구조대와 가족이 알아야 할 내용을 적으세요')),
+      field(t('비상연락처 (가족 외)'), h('input', { name: 'emergencyContact', maxlength: 100, value: p.emergencyContact || '' }),
+        t('비상시 구조대와 가족이 연락할 수 있는 사람을 적으세요')),
       h('button', { class: 'btn', type: 'submit' }, t('저장')));
   }).catch((err) => form.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
   form.addEventListener('submit', (e) => {
@@ -389,8 +386,7 @@ export function printView({ state }) {
   const myProfile = h('div');
   getProfile(state.me.id).then((p) => {
     myProfile.replaceChildren(
-      h('p', null, h('strong', null, state.me.name), ` · ${t('혈액형 {type}', { type: p.bloodType ? t(p.bloodType) : '-' })}${p.emergencyContact ? ` · ${t('비상연락 {contact}', { contact: p.emergencyContact })}` : ''}`),
-      p.medical ? h('p', null, t('의료: {text}', { text: p.medical })) : null);
+      h('p', null, h('strong', null, state.me.name), p.emergencyContact ? ` · ${t('비상연락 {contact}', { contact: p.emergencyContact })}` : ''));
   }).catch(() => {});
 
   return h('div', { class: 'page print-page' },
