@@ -1,6 +1,6 @@
 // 가족 현황, 마지막 위치 지도, 가족 상세
 // 관리자는 가족 전체를, 일반 가족은 본인과 관리자가 지정한 최대 3명만 본다 (서버 규칙이 강제한다).
-import { h, toast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
+import { h, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   getProfile, getChecklist, watchCheckins, updateMember, deleteMember, deleteCheckin,
@@ -183,7 +183,7 @@ export function memberDetailView({ state, params, live, navigate }) {
           class: 'btn btn-sm btn-outline-secondary',
           onClick: async () => {
             if (!(await ask(t('이 기록을 지울까요? (관리 기록에 남습니다)')))) return;
-            try { await deleteCheckin(c); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { savedToast(await deleteCheckin(c), t('지웠습니다.')); } catch (err) { toast(errorMessage(err), 'error'); }
           },
         }, t('삭제')) : '',
       ])) : empty(t('신고 기록이 없습니다.')));
@@ -228,8 +228,7 @@ function adminActions(state, m, navigate) {
       disabled: m.declareCredits >= 1,
       onClick: (e) => busy(e.currentTarget, async () => {
         try {
-          await updateMember(m.id, { declareCredits: 1 }, m.name);
-          toast(t('비상선언권 1회를 다시 줬습니다.'));
+          savedToast(await updateMember(m.id, { declareCredits: 1 }, m.name), t('비상선언권 1회를 다시 줬습니다.'));
         } catch (err) { toast(errorMessage(err), 'error'); }
       }),
     }, m.declareCredits >= 1 ? t('비상선언권 있음') : t('비상선언권 다시 주기')) : null,
@@ -238,8 +237,7 @@ function adminActions(state, m, navigate) {
       onClick: (e) => busy(e.currentTarget, async () => {
         if (m.role === 'admin' && m.active && admins.length <= 1) { toast(t('마지막 관리자는 비활성화할 수 없습니다.'), 'error'); return; }
         try {
-          await updateMember(m.id, { active: !m.active }, m.name);
-          toast(m.active ? t('접근을 차단했습니다. 이제 아무 정보도 볼 수 없습니다.') : t('다시 활성화했습니다.'));
+          savedToast(await updateMember(m.id, { active: !m.active }, m.name), m.active ? t('접근을 차단했습니다. 이제 아무 정보도 볼 수 없습니다.') : t('다시 활성화했습니다.'));
         } catch (err) { toast(errorMessage(err), 'error'); }
       }),
     }, m.active ? t('⏸ 접근 차단') : t('▶ 다시 활성화')) : null,

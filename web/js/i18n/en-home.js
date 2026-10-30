@@ -119,9 +119,16 @@ export const EN = {
   '위치 확인은 위성 신호로 하므로 인터넷이 없어도 됩니다. 처음 위치를 잡는 데 1분 가까이 걸릴 수 있으니 하늘이 보이는 곳에서 기다리세요.': 'Location comes from satellite signals, so no internet is needed. The first fix can take about a minute, so wait somewhere with a view of the sky.',
   '거리·방향: ': 'Distance and direction: ',
   '지도가 안 떠도 집합장소까지의 직선 거리와 방향(북·남·동·서)을 보여줍니다.': 'Even without a map, the app shows the straight-line distance and direction (N, S, E, W) to the meeting point.',
-  '생존신고: ': 'Safety check-ins: ',
-  '휴대폰에 보관했다가 인터넷이 연결되는 순간 자동으로 전송됩니다.': 'They are stored on your phone and sent automatically as soon as you are back online.',
+  '생존신고·비상선언·게시판: ': 'Check-ins, declarations and the board: ',
+  '휴대폰에 보관했다가 인터넷이 연결되는 순간 자동으로 전송됩니다. 보관 중에는 노란 안내가 뜨고, 비상선언은 전송된 뒤에야 가족 휴대폰에 알림이 가니 그 전에는 전화·문자로 알리세요.':
+    'Kept on this phone and sent automatically the moment the internet is back. While kept, a yellow notice is shown. A declaration notifies the family only after it is sent, so call or text them until then.',
   '문자: ': 'Text messages: ',
+  '지도: ': 'Maps: ',
+  '집합장소와 내 위치 주변 지도는 미리 저장됩니다(설정 → 오프라인 준비). 한 번 본 다른 지역도 남습니다.':
+    'Map areas around the meeting points and your location are saved in advance (Settings → Offline readiness). Other areas you have viewed stay saved too.',
+  '와이파이는 되는데 인터넷이 안 될 때: ': 'Wi-Fi connected but no internet: ',
+  '화면 위에 "서버에 연결되지 않습니다" 띠가 뜨고, 그동안은 오프라인과 같이 동작합니다.':
+    'A "Cannot reach the server" bar appears at the top, and the app behaves as if offline until the connection is back.',
   '데이터는 안 되고 문자만 될 때 "문자로 알리기"를 쓰세요. 좌표가 함께 갑니다.': 'If data is down but texting works, use "Send by text". Your coordinates are included.',
   '자주 묻는 질문': 'Frequently asked questions',
   '로그인은 어떻게 하나요?': 'How do I sign in?',

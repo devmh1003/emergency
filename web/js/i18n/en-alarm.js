@@ -80,6 +80,12 @@ export const EN = {
   '경보 해제': 'End alert',
   '상황이 끝났으면 해제하세요. 가족 모두에게 해제 알림이 가고, 집합장소 시간이 평상시 표시로 돌아갑니다.': 'End the alert when the situation is over. Everyone in the family will be notified, and meeting point times will return to normal display.',
   '경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.': 'End the alert? Everyone in the family will be notified.',
+  '오프라인: 선언을 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다. 지금은 전화·문자로 알리세요.':
+    'Offline: the declaration is kept on this phone. It will be sent automatically when the internet is back, and the family will be notified then. For now, call or text them.',
+  '오프라인: 격상을 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다. 지금은 전화·문자로 알리세요.':
+    'Offline: the escalation is kept on this phone. It will be sent automatically when the internet is back, and the family will be notified then. For now, call or text them.',
+  '오프라인: 해제를 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다.':
+    'Offline: the all-clear is kept on this phone. It will be sent automatically when the internet is back, and the family will be notified then.',
   '해제됐습니다. 알림 발송 실패: {error}': 'Alert ended. Notifications failed to send: {error}',
   '경보를 해제했습니다.': 'Alert ended.',
   '✅ 경보 해제': '✅ End alert',

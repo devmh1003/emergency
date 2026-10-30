@@ -63,6 +63,15 @@ export function toast(message, kind = 'info') {
 }
 
 /**
+ * 저장 결과 안내. store.js 의 쓰기 함수는 오프라인이면 'queued'(휴대폰에 보관, 연결되면 자동 전송)를 돌려준다.
+ * 그때는 성공 문구 대신 보관됐다는 노란 안내를 보여 준다.
+ */
+export function savedToast(result, message, kind = 'info') {
+  if (result === 'queued') toast(t('저장됨 — 오프라인이라 연결되면 자동으로 전송됩니다.'), 'warn');
+  else toast(message, kind);
+}
+
+/**
  * 화면 정중앙에 확인 창을 띄운다 (휴대폰 위쪽에 뜨는 브라우저 기본 confirm 창 대신).
  * 확인하면 true, 취소·바깥 누름·Esc 면 false.
  */

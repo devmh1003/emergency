@@ -179,7 +179,8 @@ async function networkFirstPage(request) {
     if (res.redirected) return Response.redirect(res.url, 302);
     return res;
   } catch {
-    return (await cache.match('index.html')) || (await cache.match('./')) || Response.error();
+    // 개인정보 처리방침 등 다른 화면을 직접 열었으면 그 저장본, 아니면 앱 첫 화면.
+    return (await cache.match(request, { ignoreSearch: true })) || (await cache.match('index.html')) || (await cache.match('./')) || Response.error();
   }
 }
 

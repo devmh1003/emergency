@@ -1,6 +1,6 @@
 // 관리자 설정: 비상 선언·격상·해제, 소리·알림 테스트, 가족 등록·관리, 설정 바로가기를 한 화면에서.
 // 기록은 맨 아래에 최근 몇 줄만 보여주고, 전체는 관리자 기록 화면에서 본다.
-import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
+import { h, field, select, formData, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
@@ -51,8 +51,7 @@ function creditCell(m) {
     class: 'btn btn-sm btn-outline',
     onClick: (ev) => busy(ev.currentTarget, async () => {
       try {
-        await updateMember(m.id, { declareCredits: 1 }, m.name);
-        toast(t('비상선언권 1회를 다시 줬습니다.'));
+        savedToast(await updateMember(m.id, { declareCredits: 1 }, m.name), t('비상선언권 1회를 다시 줬습니다.'));
       } catch (err) { toast(errorMessage(err), 'error'); }
     }),
   }, t('다시 주기'));
@@ -145,8 +144,7 @@ function disasterPanel(state, unsubs) {
     const list = regions.value.split(/[,，]/).map((r) => r.trim().slice(0, 40)).filter(Boolean).slice(0, 20);
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        await saveDisasterSettings(state.me, { enabled: enabled.checked, regions: list, level2: level2.checked });
-        toast(t('저장했습니다.'));
+        savedToast(await saveDisasterSettings(state.me, { enabled: enabled.checked, regions: list, level2: level2.checked }), t('저장했습니다.'));
       } catch (err) { toast(errorMessage(err), 'error'); }
     });
   });

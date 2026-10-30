@@ -51,6 +51,8 @@ export const state = {
   disasterRecent: null,
   checklist: {},
   online: navigator.onLine,
+  // Firestore 서버에 실제로 닿는지 (와이파이는 되는데 인터넷이 안 되면 navigator.onLine 은 true 라 이 값으로 안다)
+  serverReachable: true,
   get protocols() {
     // 영어 화면: 기본 대처법은 영어판을 쓰고, 관리자가 따로 추가한 대처법만 서버 것을 붙인다.
     // 한국어: 서버 대처법이 우선이고, 서버에 없는 기본 대처법(새로 추가된 것)은 뒤에 붙인다.
@@ -223,7 +225,7 @@ function renderChrome() {
   if (!state.me) {
     mount(navEl);
     mount(topNavEl);
-    mount(bannerEl, state.online ? null : offlineBanner());
+    mount(bannerEl, state.online && state.serverReachable ? null : offlineBanner());
     renderFooter();
     return;
   }
@@ -233,13 +235,29 @@ function renderChrome() {
     state.isAdmin ? navLink(ADMIN_NAV[0], null, ADMIN_NAV[2], path, 'nav-admin') : null));
   const bottom = state.isAdmin ? ADMIN_BOTTOM_NAV : BOTTOM_NAV;
   mount(navEl, bottom.map((to) => [...NAV, ADMIN_NAV].find(([x]) => x === to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
-  mount(bannerEl, state.online ? null : offlineBanner(), emergencyBanner());
+  mount(bannerEl, state.online && state.serverReachable ? null : offlineBanner(), emergencyBanner());
   renderFooter();
 }
 
 function offlineBanner() {
   return h('div', { class: 'offline-banner', role: 'status' },
-    h('div', null, t('오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.')));
+    h('div', null, state.online
+      ? t('서버에 연결되지 않습니다 (인터넷이 안 되는 와이파이일 수 있습니다). 저장된 정보를 보여주고, 신고·선언은 휴대폰에 보관했다가 연결되면 자동 전송합니다.')
+      : t('오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.')));
+}
+
+// 서버에 닿지 않는 상태가 잠깐(처음 열 때 저장본을 먼저 보여 주는 순간)이 아니라 이어질 때만 띠를 보인다.
+let unreachableTimer = null;
+function noteServerReachable(reachable) {
+  clearTimeout(unreachableTimer);
+  unreachableTimer = null;
+  if (reachable) {
+    if (!state.serverReachable) { state.serverReachable = true; renderChrome(); }
+    return;
+  }
+  if (state.serverReachable) {
+    unreachableTimer = setTimeout(() => { state.serverReachable = false; renderChrome(); }, 8000);
+  }
 }
 
 function emergencyBanner() {
@@ -404,8 +422,18 @@ function startSubscriptions(uid) {
   meUnsub = store.watchDoc(['members', uid], (me, snap) => {
     // 방금 등록한 문서가 아직 서버에 저장되기 전이면 기다린다. 서버가 모르는 상태로 구독하면 거부된다.
     if (!active && snap.metadata.hasPendingWrites) return;
+    noteServerReachable(!snap.metadata.fromCache);
     state.me = me && me.active && state.gates && me.gen === state.gates.gen ? me : null;
     store.setActor(state.me);
+    // 오프라인인데 휴대폰에 내 정보(또는 접속 정보)가 저장돼 있지 않으면, 계정 문제가 아니라 인터넷 문제다.
+    if (!state.me && snap.metadata.fromCache && (!me || !state.gates)) {
+      active = false;
+      stopDataSubscriptions();
+      listeners = [];
+      mount(viewEl, offlineNoDataView());
+      renderChrome();
+      return;
+    }
     if (!state.me) {
       active = false;
       stopDataSubscriptions();
@@ -435,7 +463,7 @@ function startSubscriptions(uid) {
   }, (err) => {
     console.error(err);
     mount(viewEl, notRegisteredView(state.user));
-  });
+  }, { metadata: true }); // 서버에 닿는지(fromCache)가 바뀔 때도 알아야 오프라인 띠를 맞게 보인다
 }
 
 function startDataSubscriptions() {
@@ -505,6 +533,13 @@ function offlineFirstView() {
   return h('div', { class: 'auth-wrap' }, h('div', { class: 'auth-card' },
     h('h1', null, t('인터넷 연결이 필요합니다')),
     h('p', null, t('처음 들어올 때는 인터넷이 필요합니다. 한 번 들어온 뒤에는 인터넷 없이도 열립니다.'))));
+}
+
+/** 로그인은 돼 있지만 이 휴대폰에 저장된 내 정보가 없고 서버에도 닿지 않을 때 */
+function offlineNoDataView() {
+  return h('div', { class: 'auth-wrap' }, h('div', { class: 'auth-card' },
+    h('h1', null, t('서버에 연결되지 않습니다')),
+    h('p', null, t('이 휴대폰에는 아직 가족 정보가 저장되지 않았습니다. 인터넷이 연결되면 자동으로 이어집니다. 그동안은 전화·문자로 연락하세요.'))));
 }
 
 /** 관문 계정(접속 코드)으로 로그인한 상태면 어느 코드인지 */

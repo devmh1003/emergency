@@ -1,8 +1,7 @@
 // 설정: 알림, 앱 설치, 글자 크기, 내 정보, 접속 코드 관리(관리자), 내 기록, 인쇄용 비상카드
 import {
   h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, isIOS, isStandalone,
-  FONT_SCALES, savedFontScale, applyFontScale, ask, nativeApp, isAndroid, ANDROID_APP_URL,
-} from '../dom.js';
+  FONT_SCALES, savedFontScale, applyFontScale, ask, nativeApp, isAndroid, ANDROID_APP_URL, savedToast } from '../dom.js';
 import { config, logout, errorMessage, callWorker } from '../firebase.js';
 import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, rekeyAccess, deleteLegacyMembers } from '../store.js';
 import { enablePush, pushStatus, disablePush } from '../push.js';
@@ -147,8 +146,7 @@ function myInfoPanel(state) {
     e.preventDefault();
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        await updateMyInfo(state.me.id, formData(form));
-        toast(t('저장했습니다.'));
+        savedToast(await updateMyInfo(state.me.id, formData(form)), t('저장했습니다.'));
       } catch (err) {
         toast(errorMessage(err), 'error');
       }
@@ -248,8 +246,7 @@ function accessCodePanel(state) {
         onClick: (e) => busy(e.currentTarget, async () => {
           if (!(await ask(t('예전 방식 계정 문서를 정리할까요?')))) return;
           try {
-            await deleteLegacyMembers(state.legacyMembers);
-            toast(t('정리했습니다.'));
+            savedToast(await deleteLegacyMembers(state.legacyMembers), t('정리했습니다.'));
           } catch (err) { toast(errorMessage(err), 'error'); }
         }),
       }, t('정리하기')))

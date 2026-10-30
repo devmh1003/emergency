@@ -17,8 +17,13 @@ const ESTIMATE = { serverTimestamps: 'estimate' };
 
 // ---------- 실시간 구독 ----------
 
-export function watchDoc(path, cb, onError) {
-  return onSnapshot(ref(...path), (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data(ESTIMATE) } : null, snap), onError);
+/**
+ * metadata: true 면 내용은 같아도 서버 연결 상태(fromCache)나 전송 대기(hasPendingWrites)가 바뀔 때도 부른다.
+ * (기본값은 내용이 바뀔 때만. 서버에 닿는지 알아야 하는 구독에만 켠다.)
+ */
+export function watchDoc(path, cb, onError, { metadata = false } = {}) {
+  return onSnapshot(ref(...path), { includeMetadataChanges: metadata },
+    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data(ESTIMATE) } : null, snap), onError);
 }
 
 export function watchCollection(name, cb, onError, ...constraints) {
@@ -54,6 +59,7 @@ export async function getProfile(uid) {
 /**
  * 오프라인이면 Firestore 쓰기는 서버 응답이 올 때까지 끝나지 않는다(휴대폰에 보관됐다가 자동 전송).
  * 화면이 멈추지 않도록 잠깐만 기다리고, 그 안에 안 끝나면 "전송 대기"로 알린다.
+ * 이 파일의 쓰기 함수는 (서버 확인이 꼭 필요한 접속 코드·계정 작업을 빼고) 모두 이 결과를 돌려준다.
  * @returns {Promise<'sent'|'queued'>}
  */
 export function commitWithTimeout(promise, ms = 5000) {
@@ -150,8 +156,7 @@ export async function declareEmergency(me, { type, message, level }) {
   batch.set(doc(collection(db, 'emergencyLog')), {
     action: 'declare', level, type, message: data.message, by: me.id, byName: me.name, at: serverTimestamp(),
   });
-  await batch.commit();
-  return notifyFamily();
+  return commitAndNotify(batch.commit());
 }
 
 /** 2급 → 1급 격상. 이때부터 집합 시간을 센다. 일반 가족은 선언권 1회를 쓴다. */
@@ -170,8 +175,7 @@ export async function escalateEmergency(me, current, message = '') {
   batch.set(doc(collection(db, 'emergencyLog')), {
     action: 'escalate', level: 'real', type: current.type, message: data.message || '', by: me.id, byName: me.name, at: serverTimestamp(),
   });
-  await batch.commit();
-  return notifyFamily();
+  return commitAndNotify(batch.commit());
 }
 
 export async function endEmergency(me) {
@@ -185,8 +189,19 @@ export async function endEmergency(me) {
   batch.set(doc(collection(db, 'emergencyLog')), {
     action: 'end', by: me.id, byName: me.name, at: serverTimestamp(),
   });
-  await batch.commit();
-  return notifyFamily();
+  return commitAndNotify(batch.commit());
+}
+
+/**
+ * 선언·격상·해제 공통: 서버에 저장되면 알림 서버에 발송을 요청한다.
+ * 오프라인이면 선언은 휴대폰에 보관되고(화면에는 바로 반영) { queued: true } 를 돌려준다.
+ * 연결돼 저장되는 순간 그때 알림을 보낸다 (앱이 열려 있는 동안).
+ */
+async function commitAndNotify(commit) {
+  const notified = commit.then(() => notifyFamily());
+  notified.catch(() => {});
+  if ((await commitWithTimeout(commit)) === 'queued') return { queued: true };
+  return notified;
 }
 
 /** Worker에 알림 발송을 요청한다. 실패해도 선언 자체는 이미 저장됐다. */
@@ -220,7 +235,7 @@ export async function sendAlarmTest(me, { message, sound, targets }) {
 }
 
 export function ackAlarmTest(me, testId) {
-  return setDoc(ref('alarmTests', testId, 'acks', me.id), { name: me.name, at: serverTimestamp() });
+  return commitWithTimeout(setDoc(ref('alarmTests', testId, 'acks', me.id), { name: me.name, at: serverTimestamp() }));
 }
 
 export async function hasAckedAlarmTest(uid, testId) {
@@ -248,7 +263,7 @@ export async function saveDisasterSettings(me, { enabled, regions, level2 }) {
   addAudit(batch, 'disaster.settings', {
     detail: `${enabled ? '켬' : '끔'} · ${regions.length ? regions.join(', ') : '전국'}${level2 ? ' · 2급 알림 받음' : ''}`,
   });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 // ---------- 관리 기록 ----------
@@ -478,7 +493,7 @@ export async function createMember(form, gen) {
   batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() });
   await accessUpdate(batch, accessKind(form.role), uid, person);
   addAudit(batch, 'member.create', { target: uid, targetName: form.name, detail: form.role === 'admin' ? '관리자' : '가족' });
-  await batch.commit();
+  await commitWithTimeout(batch.commit());
   return uid;
 }
 
@@ -504,7 +519,7 @@ export async function updateMember(uid, form, targetName = form.name, before = n
   else if (Object.keys(form).length === 1 && 'declareCredits' in form) action = 'member.credit';
   const changed = Object.keys(form).filter((k) => CHANGE_LABELS[k]).map((k) => CHANGE_LABELS[k]);
   addAudit(batch, action, { target: uid, targetName, detail: changed.length ? `${changed.join(', ')} 저장` : '개인정보 저장' });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 /** 본인이 바꿀 수 있는 정보: 전화번호(공개)와 민감 정보(본인·관리자만) */
@@ -512,7 +527,7 @@ export async function updateMyInfo(uid, form) {
   const batch = writeBatch(db);
   batch.update(ref('members', uid), { phone: form.phone, updatedAt: serverTimestamp() });
   batch.set(ref('profiles', uid), { ...pick(form, PROFILE_FIELDS), updatedAt: serverTimestamp() }, { merge: true });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 /** 가족 삭제: 데이터 접근을 먼저 끊고(members 삭제, 이름 목록에서 뺌), 로그인 계정은 Worker가 지운다. */
@@ -523,7 +538,7 @@ export async function deleteMember(uid, name, role = 'member') {
   batch.delete(ref('profiles', uid));
   batch.delete(ref('checklists', uid));
   addAudit(batch, 'member.delete', { target: uid, targetName: name });
-  await batch.commit();
+  await commitWithTimeout(batch.commit());
   try {
     await callWorker('/admin/user', { action: 'delete', uid });
     return { accountDeleted: true };
@@ -540,14 +555,14 @@ export async function deleteLegacyMembers(list) {
     batch.delete(ref('profiles', m.id));
   }
   addAudit(batch, 'member.legacyCleanup', { detail: `${list.length}개` });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 export async function deleteCheckin(c) {
   const batch = writeBatch(db);
   batch.delete(ref('checkins', c.id));
   addAudit(batch, 'checkin.delete', { target: c.uid, targetName: c.name, detail: '신고 기록 삭제' });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 // ---------- 집합장소 ----------
@@ -567,14 +582,14 @@ export async function saveMeetingPoint(rank, data) {
     updatedAt: serverTimestamp(),
   });
   addAudit(batch, 'meet.save', { target: String(rank), targetName: `${rank}순위 ${data.name}`, detail: data.overrideAt ? '도착 시각 직접 지정' : '' });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 export async function deleteMeetingPoint(rank, name) {
   const batch = writeBatch(db);
   batch.delete(ref('meetingPoints', String(rank)));
   addAudit(batch, 'meet.delete', { target: String(rank), targetName: `${rank}순위 ${name || ''}` });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 // 가족 전체가 보는 게시판이므로 위치 좌표는 남기지 않는다 (지정되지 않은 가족의 위치가 보이지 않게).
@@ -592,7 +607,7 @@ export function addMeetingLog(me, rank, message) {
 }
 
 export function deleteMeetingLog(id) {
-  return deleteDoc(ref('meetingLogs', id));
+  return commitWithTimeout(deleteDoc(ref('meetingLogs', id)));
 }
 
 // ---------- 프로토콜 ----------
@@ -610,14 +625,14 @@ export async function saveProtocol(id, data) {
     updatedAt: serverTimestamp(),
   });
   addAudit(batch, 'protocol.save', { target: id, targetName: data.title });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 export async function deleteProtocol(id, title) {
   const batch = writeBatch(db);
   batch.delete(ref('protocols', id));
   addAudit(batch, 'protocol.delete', { target: id, targetName: title });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 /** 내장 기본 프로토콜을 서버에 올린다. 이미 있는 것은 건드리지 않는다. */
@@ -633,16 +648,16 @@ export async function seedProtocols() {
   }
   if (count) {
     addAudit(batch, 'protocol.seed', { detail: `기본 프로토콜 ${count}개 불러옴` });
-    await batch.commit();
+    await commitWithTimeout(batch.commit());
   }
   return count;
 }
 
 export function setChecklistItem(uid, key, checked) {
-  return setDoc(ref('checklists', uid), {
+  return commitWithTimeout(setDoc(ref('checklists', uid), {
     done: { [key]: checked ? true : deleteField() },
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+  }, { merge: true }));
 }
 
 export async function getChecklist(uid) {
@@ -666,14 +681,14 @@ export async function saveContact(id, data) {
     updatedAt: serverTimestamp(),
   });
   addAudit(batch, 'contact.save', { target: target.id, targetName: data.name });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 export async function deleteContact(id, name) {
   const batch = writeBatch(db);
   batch.delete(ref('contacts', id));
   addAudit(batch, 'contact.delete', { target: id, targetName: name });
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 // ---------- 비상 물품 (가족 전체가 보고 고친다) ----------
@@ -682,15 +697,15 @@ export const watchSupplies = (cb, onError) => watchCollection('supplies', cb, on
 
 export function saveSupply(me, id, { name, qty = '', where = '', note = '', expiresAt = null }) {
   const target = id ? ref('supplies', id) : doc(collection(db, 'supplies'));
-  return setDoc(target, {
+  return commitWithTimeout(setDoc(target, {
     name: name.slice(0, 60), qty: qty.slice(0, 40), where: where.slice(0, 60), note: note.slice(0, 200),
     expiresAt: expiresAt ? Timestamp.fromDate(expiresAt) : null,
     by: me.id, byName: me.name, updatedAt: serverTimestamp(),
-  });
+  }));
 }
 
 export function deleteSupply(id) {
-  return deleteDoc(ref('supplies', id));
+  return commitWithTimeout(deleteDoc(ref('supplies', id)));
 }
 
 /** 기본 물품 목록을 넣는다 (수량·기한은 나중에 채운다). */
@@ -699,7 +714,7 @@ export async function seedSupplies(me) {
   for (const p of SUPPLY_PRESETS) {
     batch.set(doc(collection(db, 'supplies')), { ...p, note: '', expiresAt: null, by: me.id, byName: me.name, updatedAt: serverTimestamp() });
   }
-  await batch.commit();
+  return commitWithTimeout(batch.commit());
 }
 
 // ---------- 알림 토큰 ----------

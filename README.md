@@ -175,6 +175,14 @@ npm run serve
 
 `web/` 에 파일을 추가하면 `web/sw.js` 의 `APP_FILES` 에도 추가하세요 (`npm test` 가 검사합니다).
 
+```bash
+npx firebase-tools emulators:start --only auth,firestore --project demo-family   # 터미널 1
+EMULATOR=1 node tools/serve.js                                                   # 터미널 2
+PLAYWRIGHT_DIR=<playwright 설치 폴더> node tools/offline-check.mjs               # 터미널 3
+```
+
+오프라인 실제 점검: 설치된 Chrome 으로 처음 설정 → 저장 완료 → 인터넷 끊기 → 모든 화면 → 생존신고·비상선언·게시판·물품 → 복구 후 서버 반영까지 확인합니다. playwright 는 이 저장소에 넣지 않으니 다른 폴더에서 `npm i playwright` 한 뒤 그 폴더를 `PLAYWRIGHT_DIR` 로 줍니다.
+
 ## 안드로이드 앱 (`android/`)
 
 사이트를 그대로 여는 안드로이드 앱입니다. 사이트를 고치면 앱에도 바로 반영되므로, 앱은 알림·권한 부분을 바꿀 때만 다시 빌드합니다.

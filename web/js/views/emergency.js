@@ -1,5 +1,5 @@
 // 비상 경보 화면(2급 → 1급), 빠른 선언, 전체 화면 경보, 테스트 알람
-import { h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, ask, nativeApp } from '../dom.js';
+import { h, field, select, formData, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table, ask, nativeApp } from '../dom.js';
 import { errorMessage, callWorker } from '../firebase.js';
 import { t } from '../i18n.js';
 import {
@@ -174,8 +174,7 @@ export async function maybeTestAlarm(state, test) {
     onConfirm: async () => {
       writeLocal(testAckStorageKey(uid), test.id);
       try {
-        await ackAlarmTest(state.me, test.id);
-        toast(t('확인을 보냈습니다. 관리자 화면에 표시됩니다.'));
+        savedToast(await ackAlarmTest(state.me, test.id), t('확인을 보냈습니다. 관리자 화면에 표시됩니다.'));
       } catch (err) {
         toast(errorMessage(err), 'error');
       }
@@ -289,6 +288,16 @@ function sinceText(at) {
   return d ? ` ${t('({time} 지남)', { time: formatRemaining(Date.now() - d.getTime()) })}` : '';
 }
 
+/**
+ * 오프라인에서 선언·격상·해제를 눌렀을 때: 이 휴대폰에는 바로 반영되고 연결되면 전송·알림된다.
+ * 가족 휴대폰에는 아직 알림이 가지 않았으니 전화·문자로 알리라고 한다.
+ */
+function queuedToast(action) {
+  if (action === 'end') toast(t('오프라인: 해제를 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다.'), 'warn');
+  else if (action === 'escalate') toast(t('오프라인: 격상을 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다. 지금은 전화·문자로 알리세요.'), 'warn');
+  else toast(t('오프라인: 선언을 휴대폰에 보관했습니다. 인터넷이 연결되면 자동으로 전송되고 그때 가족에게 알림이 갑니다. 지금은 전화·문자로 알리세요.'), 'warn');
+}
+
 function endButton(state) {
   return h('button', {
     class: 'btn btn-lg',
@@ -298,7 +307,8 @@ function endButton(state) {
       busy(target, async () => {
         try {
           const r = await endEmergency(state.me);
-          toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
+          if (r?.queued) queuedToast('end');
+          else toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
         } catch (err) {
           toast(errorMessage(err), 'error');
         }
@@ -317,7 +327,8 @@ function escalateButton(state) {
       busy(target, async () => {
         try {
           const r = await escalateEmergency(state.me, state.emergency, '');
-          toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
+          if (r?.queued) queuedToast('escalate');
+          else toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
         } catch (err) {
           toast(errorMessage(err), 'error');
         }
@@ -371,7 +382,8 @@ function alertActiveCard(state) {
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
         const r = await escalateEmergency(me, e, message);
-        toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
+        if (r?.queued) queuedToast('escalate');
+        else toast(r?.error ? t('전환됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }) : t('1급으로 격상했습니다. 알림 {n}건 발송.', { n: r?.sent ?? 0 }), r?.error ? 'error' : 'info');
       } catch (err) {
         toast(errorMessage(err), 'error');
       }
@@ -426,7 +438,8 @@ export function quickDeclarePanel(state, { flat = false } = {}) {
         busy(target, async () => {
           try {
             const r = await declareEmergency(state.me, { level, type, message: '' });
-            if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
+            if (r?.queued) queuedToast('declare');
+            else if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
             else toast(t('{level}을 알렸습니다. 알림 {n}건 발송.', { level: t(levelTitle(level)), n: r?.sent ?? 0 }));
             // 관리자 설정 화면에서는 그 자리에 머문다 (선언 후 격상·해제도 거기서 한다).
             if (!location.hash.startsWith('#/admin')) location.hash = '/emergency';
@@ -490,7 +503,8 @@ function declareCard(state, navigate) {
     busy(submit, async () => {
       try {
         const r = await declareEmergency(me, data);
-        if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
+        if (r?.queued) queuedToast('declare');
+        else if (r?.error) toast(t('발령됐습니다. 다만 알림 발송에 실패했습니다: {error}', { error: r.error }), 'error');
         else toast(t('{level}을 알렸습니다. 알림 {n}건 발송.', { level: t(levelTitle(data.level)), n: r?.sent ?? 0 }));
         navigate('/');
       } catch (err) {

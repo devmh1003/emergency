@@ -1,5 +1,5 @@
 // 관리자 화면: 가족 추가·수정, 집합장소 설정, 대처법 편집
-import { h, field, select, formData, toast, busy, card, panel, pageHeader, empty, alertBox, ask } from '../dom.js';
+import { h, field, select, formData, toast, savedToast, busy, card, panel, pageHeader, empty, alertBox, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, getProfile, saveMeetingPoint, deleteMeetingPoint,
@@ -110,8 +110,7 @@ export function memberEditView({ state, params, navigate }) {
           toast(t('{name}님을 추가했습니다. {code}를 알려 주면 목록에서 이름을 골라 들어올 수 있습니다.', { name: data.name, code: data.role === 'admin' ? t('관리자 코드') : t('가족 코드') }));
           navigate(`/member/${encodeURIComponent(uid)}`);
         } else {
-          await updateMember(m.id, data, data.name, m);
-          toast(t('저장했습니다.'));
+          savedToast(await updateMember(m.id, data, data.name, m), t('저장했습니다.'));
           navigate(`/member/${encodeURIComponent(m.id)}`);
         }
       } catch (err) {
@@ -197,7 +196,7 @@ export function meetEditView({ state, params, navigate }) {
           const target = e.currentTarget;
           if (!(await ask(t('{rank}순위 집합장소를 지울까요?', { rank })))) return;
           busy(target, async () => {
-            try { await deleteMeetingPoint(rank, p.name); toast(t('지웠습니다.')); navigate('/admin/meet'); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { savedToast(await deleteMeetingPoint(rank, p.name), t('지웠습니다.')); navigate('/admin/meet'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },
       }, t('삭제')) : null,
@@ -209,13 +208,13 @@ export function meetEditView({ state, params, navigate }) {
     const overrideAt = d.overrideAt ? toDate(new Date(d.overrideAt)) : null;
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        await saveMeetingPoint(rank, {
+        const r = await saveMeetingPoint(rank, {
           ...d,
           lat: picked?.lat ?? null,
           lng: picked?.lng ?? null,
           overrideAt,
         });
-        toast(t('{rank}순위를 저장했습니다.', { rank }));
+        savedToast(r, t('{rank}순위를 저장했습니다.', { rank }));
         navigate('/admin/meet');
       } catch (err) {
         toast(errorMessage(err), 'error');
@@ -276,7 +275,7 @@ export function protocolEditView({ state, params, navigate }) {
           const target = e.currentTarget;
           if (!(await ask(t('"{title}"을(를) 지울까요?', { title: p.title })))) return;
           busy(target, async () => {
-            try { await deleteProtocol(p.id, p.title); toast(t('지웠습니다.')); navigate('/admin/protocols'); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { savedToast(await deleteProtocol(p.id, p.title), t('지웠습니다.')); navigate('/admin/protocols'); } catch (err) { toast(errorMessage(err), 'error'); }
           });
         },
       }, t('삭제')) : null,
@@ -289,7 +288,7 @@ export function protocolEditView({ state, params, navigate }) {
     if (isNew && state.serverProtocols.some((x) => x.id === id)) { toast(t('이미 있는 id입니다.'), 'error'); return; }
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        await saveProtocol(id, {
+        const r = await saveProtocol(id, {
           title: d.title,
           icon: d.icon,
           order: d.order,
@@ -298,7 +297,7 @@ export function protocolEditView({ state, params, navigate }) {
           steps: parseSteps(d.steps),
           checklist: parseChecklist(d.checklist, p.checklist || []),
         });
-        toast(t('저장했습니다.'));
+        savedToast(r, t('저장했습니다.'));
         navigate(`/protocols/${encodeURIComponent(id)}`);
       } catch (err) {
         toast(errorMessage(err), 'error');

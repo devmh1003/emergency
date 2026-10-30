@@ -24,6 +24,12 @@ export const EN = {
   '1339 질병관리청': '1339 Disease control (KDCA)',
   '버전 {build}': 'Version {build}',
   '인터넷 연결이 필요합니다': 'Internet connection required',
+  '서버에 연결되지 않습니다 (인터넷이 안 되는 와이파이일 수 있습니다). 저장된 정보를 보여주고, 신고·선언은 휴대폰에 보관했다가 연결되면 자동 전송합니다.':
+    'Cannot reach the server (this Wi-Fi may have no internet). Saved information is shown, and check-ins and declarations are kept on this phone and sent automatically when you reconnect.',
+  '서버에 연결되지 않습니다': 'Cannot reach the server',
+  '이 휴대폰에는 아직 가족 정보가 저장되지 않았습니다. 인터넷이 연결되면 자동으로 이어집니다. 그동안은 전화·문자로 연락하세요.':
+    'No family information is saved on this phone yet. It will continue automatically once the internet is back. Until then, use phone calls or text messages.',
+  '저장됨 — 오프라인이라 연결되면 자동으로 전송됩니다.': 'Saved — you are offline, so it will be sent automatically when you reconnect.',
   '처음 들어올 때는 인터넷이 필요합니다. 한 번 들어온 뒤에는 인터넷 없이도 열립니다.':
     'You need the internet the first time you sign in. After that, the app opens without it.',
   '문제가 생겼습니다. 화면을 새로고침해 주세요.': 'Something went wrong. Please reload the page.',

@@ -1,5 +1,5 @@
 // 비상 물품: 가족이 함께 보는 물·식량·약·건전지 목록과 유통기한. 기한이 가까우면 홈에서 알려 준다.
-import { h, field, formData, toast, busy, panel, pageHeader, empty, alertBox, ask } from '../dom.js';
+import { h, field, formData, toast, savedToast, busy, panel, pageHeader, empty, alertBox, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { saveSupply, deleteSupply, seedSupplies } from '../store.js';
 import { toDate, expiryState, suppliesStatus, SUPPLY_PRESETS } from '../logic.js';
@@ -46,9 +46,10 @@ function supplyForm(state, item, onDone) {
     const expiresAt = d.expires ? new Date(`${d.expires}T12:00:00`) : null;
     busy(form.querySelector('button[type=submit]'), async () => {
       try {
-        await saveSupply(state.me, item?.id || null, { name: d.name.trim(), qty: d.qty.trim(), where: d.where.trim(), note: d.note.trim(), expiresAt });
+        const r = await saveSupply(state.me, item?.id || null, { name: d.name.trim(), qty: d.qty.trim(), where: d.where.trim(), note: d.note.trim(), expiresAt });
         form.reset();
         onDone();
+        savedToast(r, t('저장했습니다.'));
       } catch (err) { toast(errorMessage(err), 'error'); }
     });
   });
@@ -70,7 +71,7 @@ function supplyRow(state, item, now) {
         class: 'btn btn-sm btn-outline-secondary', type: 'button',
         onClick: (e) => busy(e.currentTarget, async () => {
           if (!(await ask(t('"{name}"을(를) 목록에서 지울까요?', { name: item.name })))) return;
-          try { await deleteSupply(item.id); } catch (err) { toast(errorMessage(err), 'error'); }
+          try { savedToast(await deleteSupply(item.id), t('지웠습니다.')); } catch (err) { toast(errorMessage(err), 'error'); }
         }),
       }, t('지우기'))));
   row.append(view());
@@ -106,7 +107,7 @@ export function suppliesView({ state, live }) {
           h('button', {
             class: 'btn btn-outline', type: 'button',
             onClick: (e) => busy(e.currentTarget, async () => {
-              try { await seedSupplies(state.me); toast(t('기본 목록을 불러왔습니다. 수량과 유통기한을 적어 주세요.')); } catch (err) { toast(errorMessage(err), 'error'); }
+              try { savedToast(await seedSupplies(state.me), t('기본 목록을 불러왔습니다. 수량과 유통기한을 적어 주세요.')); } catch (err) { toast(errorMessage(err), 'error'); }
             }),
           }, t('기본 목록 불러오기')));
       }

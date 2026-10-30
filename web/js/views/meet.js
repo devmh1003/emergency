@@ -1,5 +1,5 @@
 // 집합장소: 진행 단계, 지금 갈 곳과 남은 시간, 거리·방향(오프라인), 1~10순위 일정, 지도, 집합장소 게시판
-import { h, toast, busy, panel, pageHeader, empty, field, select, alertBox, table, ask } from '../dom.js';
+import { h, toast, savedToast, busy, panel, pageHeader, empty, field, select, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { t } from '../i18n.js';
 import { addMeetingLog, watchMeetingLogs, deleteMeetingLog } from '../store.js';
@@ -139,7 +139,7 @@ function logSection(state) {
       try {
         const r = await addMeetingLog(state.me, rankSel.value, text);
         message.value = '';
-        toast(r === 'queued' ? t('저장됨 — 연결되면 자동 전송됩니다.') : t('기록을 남겼습니다.'), r === 'queued' ? 'warn' : 'info');
+        savedToast(r, t('기록을 남겼습니다.'));
       } catch (err) {
         toast(errorMessage(err), 'error');
       }
@@ -159,7 +159,7 @@ function logSection(state) {
           class: 'btn btn-sm btn-outline-secondary',
           onClick: async () => {
             if (!(await ask(t('이 기록을 지울까요?')))) return;
-            try { await deleteMeetingLog(l.id); } catch (err) { toast(errorMessage(err), 'error'); }
+            try { savedToast(await deleteMeetingLog(l.id), t('지웠습니다.')); } catch (err) { toast(errorMessage(err), 'error'); }
           },
         }, t('삭제')) : null))))
       : empty(t('아직 남긴 기록이 없습니다.')));
