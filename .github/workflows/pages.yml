@@ -28,7 +28,7 @@ jobs:
           # 배포본에서는 로컬 개발용(에뮬레이터) 주소를 콘텐츠 보안 정책에서 뺀다.
           sed -i "s# http://127.0.0.1:9099 http://127.0.0.1:8080 http://localhost:8787##" _site/index.html
           ! grep -qE "127.0.0.1|localhost" _site/index.html
-      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: _site
 
