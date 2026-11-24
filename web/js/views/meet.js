@@ -1,5 +1,5 @@
 // 집합장소: 진행 단계, 지금 갈 곳과 남은 시간, 거리·방향(오프라인), 1~10순위 일정, 지도, 집합장소 게시판
-import { h, toast, savedToast, busy, panel, pageHeader, empty, field, select, alertBox, table, ask } from '../dom.js';
+import { h, toast, savedToast, busy, panel, foldPanel, pageHeader, empty, field, select, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { t } from '../i18n.js';
 import { addMeetingLog, watchMeetingLogs, deleteMeetingLog } from '../store.js';
@@ -117,8 +117,8 @@ export function meetView({ state, live, onChange }) {
       return steps ? h('div', { class: 'card' }, steps) : null;
     }),
     live(() => targetCard(state)),
-    panel(t('내 위치에서 집합장소까지'), null, locationPanel(state, { onChange })),
     panel(t('1~10순위 일정'), null, live(() => scheduleTable(state))),
+    panel(t('내 위치에서 집합장소까지'), null, locationPanel(state, { onChange })),
     panel(t('지도'), null, map.el, h('p', { class: 'muted small' }, t('한 번 본 지도는 휴대폰에 저장돼 오프라인에서도 보입니다. 미리 각 집합장소 주변을 한 번씩 확대해 보세요.'))),
     logSection(state));
 }
@@ -166,7 +166,7 @@ function logSection(state) {
   }, (err) => list.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
   window.addEventListener('hashchange', unsub, { once: true });
 
-  return panel(t('집합장소 게시판'), null,
+  return foldPanel(t('집합장소 게시판'), { open: true, hint: t('도착했거나 이동할 때 남기는 공지') },
     h('p', { class: 'muted small' }, t('도착했거나 다른 곳으로 이동할 때 남기세요. 모이기 위한 공지판이라 가족 모두가 봅니다.')),
     h('div', { class: 'field-row' }, field(t('장소'), rankSel), h('div')),
     field(t('내용'), message),

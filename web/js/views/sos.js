@@ -125,7 +125,7 @@ export function sosView() {
   window.addEventListener('hashchange', stopAllSignals, { once: true });
 
   return h('div', { class: 'page' },
-    pageHeader(t('🆘 구조 신호'), { lead: t('갇히거나 길을 잃었을 때 휴대폰으로 내 위치를 알립니다. 인터넷이 없어도 됩니다. 배터리를 아끼려면 필요할 때만 켜세요.') }),
+    pageHeader(t('🆘 구조 신호'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('갇히거나 길을 잃었을 때 휴대폰으로 내 위치를 알립니다. 인터넷이 없어도 됩니다. 배터리를 아끼려면 필요할 때만 켜세요.') }),
     alertBox('info', null, h('p', null, t('먼저 "도움 요청"을 눌러 가족에게 위치를 보내고, 119에 문자로 위치·층·상황을 보내세요. 그다음 이 신호로 구조대의 눈과 귀를 끕니다.'))),
 
     panel(t('🔦 손전등'), null,

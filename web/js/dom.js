@@ -151,6 +151,31 @@ export function panel(title, link, ...children) {
     ...children);
 }
 
+// 접은 구역을 열어 둔 상태 (화면이 다시 그려져도 유지, 앱을 닫으면 처음 상태로)
+const foldState = new Map();
+
+/**
+ * 접었다 펴는 카드. key 로 열림 상태를 기억한다.
+ * opts: { key, open: 처음부터 펼침, hint: 제목 아래 짧은 설명, id }
+ */
+export function foldPanel(title, { key = title, open = false, hint = null, id = null } = {}, ...children) {
+  const el = h('details', { class: 'card fold', id },
+    h('summary', { class: 'fold-summary' },
+      h('span', { class: 'fold-title' }, h('strong', null, title), hint ? h('span', { class: 'fold-hint' }, hint) : null)),
+    h('div', { class: 'fold-body' }, ...children));
+  el.open = foldState.get(key) ?? open;
+  el.addEventListener('toggle', () => foldState.set(key, el.open));
+  return el;
+}
+
+/** 아이콘·제목·설명이 있는 메뉴 줄 목록. items: [href, icon, title, desc] */
+export function menuList(items) {
+  return h('nav', { class: 'menu-list' }, items.filter(Boolean).map(([href, icon, title, desc]) => h('a', { class: 'menu-row', href },
+    h('span', { class: 'menu-icon', 'aria-hidden': 'true' }, icon),
+    h('span', { class: 'menu-text' }, h('strong', null, title), desc ? h('span', null, desc) : null),
+    h('span', { class: 'menu-arrow', 'aria-hidden': 'true' }, '›'))));
+}
+
 /**
  * 페이지 제목. 두 번째 인자로 { lead, crumbs: [{label, href}] } 를 줄 수 있고, 나머지는 오른쪽 버튼들.
  * 위에 "홈 › … › 제목" 경로 표시가 붙는다.
@@ -160,7 +185,10 @@ export function pageHeader(title, ...rest) {
   if (rest[0] && !(rest[0] instanceof Node) && typeof rest[0] === 'object') opts = rest.shift();
   const actions = rest.filter(Boolean);
   const crumbs = [{ label: t('홈'), href: '#/' }, ...(opts.crumbs || [])];
+  const back = crumbs[crumbs.length - 1];
   return h('div', null,
+    // 휴대폰에서는 경로 대신 한 단계 위로 가는 큰 버튼 하나만 보인다 (app.css)
+    h('a', { class: 'back-link', href: back.href }, h('span', { 'aria-hidden': 'true' }, '‹'), back.label),
     h('nav', { class: 'breadcrumb', 'aria-label': t('현재 위치') },
       crumbs.map((c) => [h('a', { href: c.href }, c.label), h('span', { 'aria-hidden': 'true' }, '›')]),
       h('span', { 'aria-current': 'page' }, typeof title === 'string' ? title : '')),

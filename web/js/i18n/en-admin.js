@@ -162,7 +162,6 @@ export const EN = {
   '+ 가족 추가': '+ Add family member',
   '개인정보 보호를 위해 관리자가 지정한 가족만 보입니다. 다른 가족의 정보가 필요하면 관리자에게 요청하세요.': 'To protect privacy, you can see only the family members an admin has assigned to you. To see others, ask an admin.',
   '가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.': 'Locations where family members last sent a safety check-in or checkpoint. This is not live tracking.',
-  '관리자 메뉴': 'Admin menu',
   '개인정보·연결 상태 표': 'Personal info and visibility table',
   '알림·신고·관리 작업': 'Alerts, check-ins, admin actions',
   '1~10순위': 'Priority 1–10',
@@ -240,7 +239,6 @@ export const EN = {
   '가족 {n}명': 'Family members: {n}',
 
   // ---- 상황별 대처법 (protocols.js) ----
-  '상황마다 지금 즉시, 몇 시간 안에, 며칠 동안 할 일과 준비물 체크리스트를 정리했습니다. 인터넷이 없어도 볼 수 있습니다.': 'For each situation: what to do right now, within a few hours, and over the next few days, plus a supply checklist. Available offline.',
   '나의 대비 상태': 'My preparedness',
   '전체 체크리스트 {done}/{total}개 완료': '{done} of {total} checklist items done',
   '등록된 대처법이 없습니다.': 'No response guides available.',

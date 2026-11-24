@@ -108,18 +108,7 @@ export function familyView({ state, live, onChange, navigate }) {
     state.isAdmin ? null : alertBox('info', null, h('p', null, t('개인정보 보호를 위해 관리자가 지정한 가족만 보입니다. 다른 가족의 정보가 필요하면 관리자에게 요청하세요.'))),
     panel(t('상태'), null, live(() => statusSummary(state)), live(() => familyStatusList(state))),
     panel(t('마지막 위치'), null, map.el,
-      h('p', { class: 'muted small' }, t('가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.'))),
-    state.isAdmin
-      ? panel(t('관리자 메뉴'), null, h('div', { class: 'tiles' },
-        [['#/admin', '🛠', t('관리자 설정'), t('비상 선언·해제, 소리 테스트, 가족 등록')],
-          ['#/admin/directory', '🗃', t('가족 정보 한눈에'), t('개인정보·연결 상태 표')],
-          ['#/admin/logs', '📋', t('관리자 기록'), t('알림·신고·관리 작업')],
-          ['#/admin/meet', '📍', t('집합장소 설정'), t('1~10순위')],
-          ['#/admin/protocols', '📘', t('대처법 관리'), t('내용·체크리스트 편집')],
-          ['#/contacts', '☎️', t('연락처 관리'), t('가족 지정 연락처')],
-          ['#/emergency', '🚨', t('비상 경보'), t('1급·2급 발령, 해제, 테스트')]].map(([href, icon, title, desc]) => h('a', { class: 'tile tile-admin', href },
-          h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))))
-      : null);
+      h('p', { class: 'muted small' }, t('가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.'))));
 }
 
 // ---------- 가족 상세 ----------

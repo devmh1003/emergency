@@ -51,6 +51,7 @@ const APP_FILES = [
   'js/views/home.js',
   'js/views/location.js',
   'js/views/meet.js',
+  'js/views/more.js',
   'js/views/protocols.js',
   'js/views/records.js',
   'js/views/settings.js',

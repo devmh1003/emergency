@@ -49,7 +49,7 @@ export function contactsView({ state, live }) {
   }
 
   return h('div', { class: 'page' },
-    pageHeader(t('비상 연락처'), { lead: t('공공 비상 번호와 우리 가족이 정한 연락처입니다. 인터넷이 없어도 이 화면은 열립니다.') }),
+    pageHeader(t('비상 연락처'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('공공 비상 번호와 우리 가족이 정한 연락처입니다. 인터넷이 없어도 이 화면은 열립니다.') }),
 
     h('div', { class: 'grid grid-3' }, HOTLINES.map((g) => panel(g.title, null,
       h('ul', { class: 'list' }, g.items.map((it) => h('li', { class: 'list-item' },
