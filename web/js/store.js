@@ -7,7 +7,7 @@ import {
   db, auth, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
 } from './firebase.js';
 import { DEFAULT_PROTOCOLS, RETIRED_PROTOCOL_IDS } from './data/protocols.js';
-import { SUPPLY_PRESETS } from './logic.js';
+import { SUPPLY_PRESETS, lastTypeAfter } from './logic.js';
 import { t } from './i18n.js';
 
 const ref = (...path) => doc(db, ...path);
@@ -75,6 +75,7 @@ export function commitWithTimeout(promise, ms = 5000) {
  * @param {object} me 내 members 문서
  * @param {'safe'|'help'|'checkpoint'} type
  * @param {{lat,lng,accuracy}|null} pos
+ * @param {{lastType?:string}} [opts] lastType: 방금 한 신고에 위치만 덧붙일 때, 가족에게 계속 보일 상태
  */
 /** 휴대폰 배터리 잔량(%) — 가족이 누구 휴대폰이 곧 꺼질지 안다. 못 읽으면 null. */
 export async function batteryLevel() {
@@ -87,7 +88,7 @@ export async function batteryLevel() {
   }
 }
 
-export function checkIn(me, type, pos, note = '', emergency = null, battery = null) {
+export function checkIn(me, type, pos, note = '', emergency = null, battery = null, { lastType } = {}) {
   const clientAt = Timestamp.now();
   const loc = {
     lat: pos?.lat ?? null,
@@ -107,8 +108,11 @@ export function checkIn(me, type, pos, note = '', emergency = null, battery = nu
   };
   if (emergency?.active && emergency.declaredAt) record.emergencyAt = emergency.declaredAt;
   batch.set(doc(collection(db, 'checkins')), record);
+  const shown = lastType || lastTypeAfter(me.last, type, emergency);
+  // 도움 요청 뒤 체크포인트를 남길 때 새 메모가 없으면 도움 요청의 메모를 지우지 않는다.
+  const shownNote = !note && shown === 'help' && type !== 'help' ? me.last?.note || '' : note;
   batch.update(ref('members', me.id), {
-    last: { type, ...loc, note: note.slice(0, 300), at: serverTimestamp(), clientAt },
+    last: { type: shown, ...loc, note: shownNote.slice(0, 300), at: serverTimestamp(), clientAt },
     updatedAt: serverTimestamp(),
   });
   return commitWithTimeout(batch.commit());

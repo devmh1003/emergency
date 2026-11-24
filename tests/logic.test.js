@@ -8,6 +8,7 @@ import {
 } from '../web/js/logic.js';
 import { DEFAULT_PROTOCOLS } from '../web/js/data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from '../web/js/data/protocols.en.js';
+import { lastTypeAfter } from '../web/js/logic.js';
 import { expiryState, suppliesStatus, shelterLinks } from '../web/js/logic.js';
 
 const T0 = new Date('2026-10-27T09:00:00+09:00');
@@ -87,6 +88,30 @@ test('비상 중에는 선언 이후 신고만 무사로 인정한다', () => {
   assert.equal(memberStatus(help, emergency).key, 'help');
   assert.equal(memberStatus(checkpoint, emergency).key, 'safe');
   assert.equal(memberStatus(after, { active: false }).key, 'idle');
+});
+
+test('1급으로 격상되면 2급 때의 신고는 다시 확인이 필요하다. 도움 요청은 남는다', () => {
+  const e = { active: true, level: 'real', declaredAt: at(0), realAt: at(2) };
+  const last = (type, h) => ({ last: { type, clientAt: at(h) } });
+  assert.equal(memberStatus(last('safe', 1), e).key, 'unknown');
+  assert.equal(memberStatus(last('checkpoint', 1), e).key, 'unknown');
+  assert.equal(memberStatus(last('help', 1), e).key, 'help');
+  assert.equal(memberStatus(last('safe', 3), e).key, 'safe');
+  assert.equal(memberStatus(last('help', -1), e).key, 'unknown');
+  assert.equal(memberStatus(last('safe', 1), { active: true, level: 'alert', declaredAt: at(0) }).key, 'safe');
+});
+
+test('도움 요청 뒤의 체크포인트는 도움 요청을 지우지 않는다 ("나 무사해요"만 지운다)', () => {
+  const e = { active: true, level: 'real', declaredAt: at(0), realAt: at(0) };
+  const help = (h) => ({ type: 'help', clientAt: at(h) });
+  assert.equal(lastTypeAfter(help(1), 'checkpoint', e, at(2)), 'help');
+  assert.equal(lastTypeAfter(help(1), 'safe', e, at(2)), 'safe');
+  assert.equal(lastTypeAfter(help(-1), 'checkpoint', e, at(2)), 'checkpoint');
+  assert.equal(lastTypeAfter({ type: 'safe', clientAt: at(1) }, 'checkpoint', e, at(2)), 'checkpoint');
+  assert.equal(lastTypeAfter(null, 'checkpoint', e, at(2)), 'checkpoint');
+  // 비상이 아닐 때는 하루 안의 도움 요청만
+  assert.equal(lastTypeAfter(help(1), 'checkpoint', null, at(2)), 'help');
+  assert.equal(lastTypeAfter(help(1), 'checkpoint', null, at(30)), 'checkpoint');
 });
 
 test('나이 계산', () => {
