@@ -13,24 +13,44 @@ import { familyStatusList, statusSummary } from './family.js';
 import { locationPanel } from './location.js';
 import { quickDeclarePanel } from './emergency.js';
 
-/** 위치를 읽고 신고를 저장한다. 위치를 못 읽어도 신고는 저장한다. */
+// 위치를 기다리는 동안 새 신고를 하면 앞 신고의 위치는 덧붙이지 않는다 (새 신고를 덮어쓰지 않게).
+let reportSeq = 0;
+
+/**
+ * 신고를 먼저 저장하고, 위치는 잡히는 대로 덧붙인다 (GPS를 기다리다 앱을 닫아도 신고가 남게).
+ * @returns {Promise<{located: Promise<object|null>}>} located: 위치를 덧붙이기까지 끝나면 그 위치 (못 잡으면 null)
+ */
 async function report(state, type, note, knownPos) {
-  let pos = knownPos || null;
-  let locError = null;
-  if (!pos) {
-    try {
-      pos = await getBestPosition();
-    } catch (err) {
-      locError = err.message;
-    }
-  }
-  const result = await checkIn(state.me, type, pos, note, state.emergency, await batteryLevel());
+  const seq = ++reportSeq;
   const what = checkinLabel(type);
+  // 위치는 저장을 기다리지 않고 함께 찾기 시작한다.
+  const finding = knownPos ? null : getBestPosition().then((pos) => ({ pos }), (err) => ({ error: err.message }));
+  const battery = await batteryLevel();
+  const result = await checkIn(state.me, type, knownPos || null, note, state.emergency, battery);
   if (result === 'queued') toast(t('{what} 저장됨 — 오프라인이라 연결되면 자동으로 전송됩니다.', { what }), 'warn');
-  else toast(pos ? t('{what} 전송 완료', { what }) : t('{what} 전송 완료 (위치 없이)', { what }));
-  if (locError) toast(t('위치를 못 읽어 위치 없이 저장했습니다: {error}', { error: locError }), 'warn');
-  return pos;
+  else toast(knownPos ? t('{what} 전송 완료', { what }) : t('{what} 전송 완료. 위치를 찾아 덧붙이는 중…', { what }));
+  if (!finding) return { located: Promise.resolve(knownPos) };
+
+  const located = finding.then(async ({ pos, error }) => {
+    // 그 사이 이 휴대폰이나 다른 기기에서 다른 신고를 했으면 덮어쓰지 않는다.
+    if (seq !== reportSeq || state.me?.last?.type !== type) return pos || null;
+    if (error) {
+      toast(t('위치를 못 읽어 위치 없이 저장했습니다: {error}', { error }), 'warn');
+      return null;
+    }
+    try {
+      await checkIn(state.me, 'checkpoint', pos, note, state.emergency, battery, { lastType: type });
+    } catch (err) {
+      // 신고 자체는 이미 저장됐다.
+      toast(errorMessage(err), 'warn');
+    }
+    return pos;
+  });
+  return { located };
 }
+
+// 도움 요청 알림은 위치를 이만큼만 기다렸다가 보낸다. 늦게 잡힌 위치는 신고에 덧붙는다.
+const HELP_LOCATION_WAIT_MS = 8000;
 
 /**
  * 도움 요청을 저장한 뒤: 관련 가족의 휴대폰에 알림을 보내고(알림 서버), 이어서 문자 앱을 연다.
@@ -158,24 +178,36 @@ export function homeView({ state, live, onChange }) {
   let lastPos = null;
   const note = h('input', { placeholder: t('메모 (선택) 예: 회사 지하 대피소에 있음'), maxlength: 300, 'aria-label': t('신고 메모') });
 
+  // 메모는 필요할 때만 펼친다 (첫 화면에는 누를 버튼만). 접어도 함께 보낼 메모가 무엇인지 보인다.
+  const noteTitle = h('span');
+  const noteBox = h('details', { class: 'note-fold' }, h('summary', null, noteTitle), note);
+  const drawNote = () => {
+    const text = note.value.trim();
+    noteTitle.textContent = text ? t('함께 보낼 메모: {text}', { text }) : t('메모 덧붙이기 (선택)');
+  };
+  const clearNote = () => {
+    note.value = '';
+    noteBox.open = false;
+    drawNote();
+  };
+  note.addEventListener('input', drawNote);
+  drawNote();
+
   const run = (type, button, after = null) => busy(button, async () => {
     const original = [...button.childNodes];
     const text = note.value.trim();
-    button.textContent = t('위치 확인 중…');
+    button.textContent = t('보내는 중…');
     try {
-      const pos = await report(state, type, text, null);
-      lastPos = pos || lastPos;
-      note.value = '';
-      if (after) await after(text, pos);
+      const { located } = await report(state, type, text, null);
+      located.then((pos) => { lastPos = pos || lastPos; });
+      clearNote();
+      if (after) await after(text, await Promise.race([located, new Promise((resolve) => setTimeout(() => resolve(null), HELP_LOCATION_WAIT_MS))]));
     } catch (err) {
       toast(errorMessage(err), 'error');
     } finally {
       button.replaceChildren(...original);
     }
   });
-
-  // 메모는 필요할 때만 펼친다 (첫 화면에는 누를 버튼만)
-  const noteBox = h('details', { class: 'note-fold' }, h('summary', null, t('메모 덧붙이기 (선택)')), note);
 
   const safeBtn = h('button', { class: 'btn btn-safe btn-hero', onClick: (e) => run('safe', e.currentTarget) },
     t('나 무사해요'), h('small', null, t('누르면 GPS 위치와 시간이 가족에게 전달됩니다')));
@@ -251,7 +283,7 @@ export function homeView({ state, live, onChange }) {
         onPosition: (p) => { lastPos = p; },
         onCheckpoint: async (p) => {
           await report(state, 'checkpoint', note.value.trim(), p);
-          note.value = '';
+          clearNote();
         },
       })),
 

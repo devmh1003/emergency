@@ -206,10 +206,24 @@ export function memberStatus(member, emergency) {
       return { key: 'unknown', label: t('확인 안 됨'), lastAt };
     }
     if (last.type === 'help') return { key: 'help', label: t('도움 필요'), lastAt };
+    // 1급으로 격상되면 그 전(2급 때)의 무사 신고는 믿지 않는다. 도움 요청은 격상 뒤에도 남는다.
+    const realAt = realStartedAt(emergency);
+    if (realAt && lastAt.getTime() < realAt.getTime()) return { key: 'unknown', label: t('확인 안 됨'), lastAt };
     return { key: 'safe', label: t('무사함'), lastAt };
   }
   if (!lastAt) return { key: 'idle', label: t('신고 기록 없음'), lastAt };
   return { key: 'idle', label: t('마지막: {label}', { label: checkinLabel(last.type) }), lastAt };
+}
+
+/**
+ * 새 신고 뒤에 가족에게 보일 마지막 상태. 도움을 요청한 사람이 체크포인트를 남겨도 도움 요청은 그대로 둔다
+ * ("나 무사해요"를 눌러야 풀린다). 지난 비상의 도움 요청, 비상이 아닐 때 하루 지난 도움 요청은 이어 가지 않는다.
+ */
+export function lastTypeAfter(last, type, emergency, now = new Date()) {
+  if (type !== 'checkpoint' || last?.type !== 'help') return type;
+  const at = toDate(last.clientAt) || toDate(last.at);
+  const since = (emergency?.active ? toDate(emergency.declaredAt) : null) || new Date(now.getTime() - 24 * HOUR);
+  return at && at.getTime() >= since.getTime() ? 'help' : type;
 }
 
 /** 상태 정렬 순서: 도움 필요 → 확인 안 됨 → 무사 */
