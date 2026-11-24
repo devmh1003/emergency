@@ -83,7 +83,7 @@ export function suppliesView({ state, live }) {
   const showAdd = () => addBox.replaceChildren(supplyForm(state, null, () => addBox.replaceChildren()));
 
   return h('div', { class: 'page' },
-    pageHeader(t('📦 비상 물품'), { lead: t('가족이 함께 보는 물·식량·약·건전지 목록입니다. 유통기한이 30일 안에 오면 홈 화면에서 알려 줍니다.') },
+    pageHeader(t('📦 비상 물품'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('가족이 함께 보는 물·식량·약·건전지 목록입니다. 유통기한이 30일 안에 오면 홈 화면에서 알려 줍니다.') },
       h('button', { class: 'btn', type: 'button', onClick: showAdd }, t('+ 물품 추가'))),
     live(() => {
       const s = suppliesStatus(state.supplies);

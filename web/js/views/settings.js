@@ -1,6 +1,6 @@
 // 설정: 알림, 앱 설치, 글자 크기, 내 정보, 접속 코드 관리(관리자), 내 기록, 인쇄용 비상카드
 import {
-  h, field, select, formData, toast, busy, panel, pageHeader, empty, alertBox, table, isIOS, isStandalone,
+  h, field, select, formData, toast, busy, panel, foldPanel, pageHeader, empty, alertBox, table, isIOS, isStandalone,
   FONT_SCALES, savedFontScale, applyFontScale, ask, nativeApp, isAndroid, ANDROID_APP_URL, savedToast } from '../dom.js';
 import { config, logout, errorMessage, callWorker } from '../firebase.js';
 import { getProfile, updateMyInfo, watchCheckins, changeAccessCode, rekeyAccess, deleteLegacyMembers } from '../store.js';
@@ -115,8 +115,8 @@ function androidAppPanel() {
 }
 
 function installPanel() {
-  if (isStandalone) return panel(t('📲 앱 설치'), null, alertBox('success', null, h('p', null, t('홈 화면 앱으로 실행 중입니다. 인터넷 없이도 열립니다.'))));
-  return panel(t('📲 홈 화면에 추가'), null,
+  if (isStandalone) return foldPanel(t('📲 앱 설치'), { hint: t('인터넷 없이 열기, 알림 받기') }, alertBox('success', null, h('p', null, t('홈 화면 앱으로 실행 중입니다. 인터넷 없이도 열립니다.'))));
+  return foldPanel(t('📲 홈 화면에 추가'), { hint: t('인터넷 없이 열기, 알림 받기') },
     h('ol', { class: 'process-list' },
       ...(isIOS
         ? [[t('Safari 아래쪽 공유 버튼(□↑)을 누릅니다.')], [t('"홈 화면에 추가"를 누릅니다.')], [t('홈 화면에 생긴 아이콘으로 열고 "알림 켜기"를 누릅니다.')]]
@@ -149,7 +149,7 @@ function myInfoPanel(state) {
       }
     });
   });
-  return panel(t('👤 내 정보'), null,
+  return foldPanel(t('👤 내 정보'), { hint: t('전화번호, 주소, 비상연락처') },
     h('div', { class: 'info-row' }, h('span', null, t('이름')), h('strong', null, state.me.name)),
     h('div', { class: 'info-row', style: { marginBottom: '1rem' } }, h('span', null, t('권한')), h('span', null, state.isAdmin ? t('관리자') : t('가족'))),
     form);
@@ -173,7 +173,7 @@ function offlinePanel(state) {
       st.prep ? h('p', { class: 'small muted', style: { marginTop: '0.5rem' } }, t('마지막 준비: {at}', { at: formatDateTime(st.prep.at) })) : null);
   };
   draw();
-  return panel(t('📴 오프라인 준비'), null,
+  return foldPanel(t('📴 오프라인 준비'), { hint: t('인터넷이 끊겨도 쓸 수 있게 미리 저장') },
     h('p', { class: 'small muted' }, t('비상시에는 인터넷이 끊길 수 있습니다. 앱을 설치하고 인터넷이 될 때 한 번 준비해 두면, 끊겨도 화면·대처법·가족 정보·집합장소 지도·GPS를 쓸 수 있습니다.')),
     box,
     h('button', {
@@ -248,7 +248,7 @@ function accessCodePanel(state) {
         }),
       }, t('정리하기')))
     : null;
-  return panel(t('🔑 접속 코드 관리'), null,
+  return foldPanel(t('🔑 접속 코드 관리'), { hint: t('가족·관리자·백업 코드 바꾸기') },
     h('p', { class: 'small muted' }, t('코드는 어디에도 저장되지 않아 다시 볼 수 없습니다. 잊었다면 여기서 새로 정하세요. 관리자 코드를 잊었다면 백업 코드로 들어와 바꿀 수 있습니다.')),
     rows,
     legacy);
@@ -262,22 +262,22 @@ const CODE_HINT = {
 
 export function settingsView({ state }) {
   return h('div', { class: 'page' },
-    pageHeader(t('설정'), { lead: t('알림, 앱 설치, 글자 크기, 내 정보를 관리합니다.') }),
-    h('div', { class: 'tiles' },
-      [['#/guide', '📖', t('사용 안내'), t('처음 설정과 비상시 행동 순서')],
-        ['#/records', '🗂', t('내 신고 기록'), t('내가 남긴 위치와 시간')],
-        ['#/print', '🖨', t('인쇄용 비상카드'), t('종이로 들고 다니기')],
-        ['#/contacts', '☎️', t('비상 연락처'), t('공공 번호와 가족 연락처')]].map(([href, icon, title, desc]) => h('a', { class: 'tile', href },
-        h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, title), h('span', null, desc)))),
+    pageHeader(t('설정'), { crumbs: [{ label: t('더보기'), href: '#/more' }] }),
+    h('h2', { class: 'section-title' }, t('알림과 경보')),
     nativeApp ? appPanel() : null,
-    !nativeApp && isAndroid ? androidAppPanel() : null,
-    h('div', { class: 'grid grid-2' }, pushPanel(state), nativeApp ? null : installPanel()),
+    pushPanel(state),
     nativeApp ? null : standbyPanel(),
-    offlinePanel(state),
+
+    h('h2', { class: 'section-title' }, t('이 휴대폰')),
     fontPanel(),
+    !nativeApp && isAndroid ? androidAppPanel() : null,
+    nativeApp ? null : installPanel(),
+    offlinePanel(state),
+
+    h('h2', { class: 'section-title' }, t('내 계정')),
     myInfoPanel(state),
     state.isAdmin ? accessCodePanel(state) : null,
-    panel(t('로그아웃'), null,
+    foldPanel(t('로그아웃'), {},
       h('p', { class: 'muted' }, t('본인 휴대폰에서는 로그아웃하지 않는 것을 권장합니다. 로그아웃하면 이 휴대폰으로 비상 알림이 오지 않습니다.')),
       h('button', {
         class: 'btn btn-outline-secondary',
@@ -294,7 +294,7 @@ export function settingsView({ state }) {
 
 /** 내 계정 삭제: 내 정보·신고 기록·로그인 계정을 지운다 (비상 선언 기록은 가족 기록이라 남는다). */
 function deletePanel(state) {
-  return panel(t('계정 삭제'), null,
+  return foldPanel(t('계정 삭제'), {},
     h('p', { class: 'small muted' }, t('내 가족 정보, 개인정보, 신고 기록, 게시판 글, 알림 등록과 로그인 계정을 지웁니다. 되돌릴 수 없고, 다시 쓰려면 관리자가 새로 등록해야 합니다. 비상 선언·해제 기록은 가족 전체의 기록이라 남습니다.')),
     h('button', {
       class: 'btn btn-outline-secondary',
@@ -335,7 +335,7 @@ export function standbyPanel() {
     draw();
   });
   draw();
-  return panel(t('🛡 경보 대기 모드 (화면이 꺼져도 경보음)'), null,
+  return foldPanel(t('🛡 경보 대기 모드 (화면이 꺼져도 경보음)'), { key: 'standby' },
     statusBox,
     h('div', { class: 'row', style: { marginTop: '0.75rem' } },
       button,
@@ -374,7 +374,7 @@ export function recordsView({ state }) {
   }, (err) => box.replaceChildren(h('p', { class: 'text-danger' }, errorMessage(err))));
   window.addEventListener('hashchange', unsub, { once: true });
   return h('div', { class: 'page' },
-    pageHeader(t('내 신고 기록'), { crumbs: [{ label: t('설정'), href: '#/settings' }], lead: t('내가 남긴 생존신고와 체크포인트입니다. 관리자도 볼 수 있습니다.') }),
+    pageHeader(t('내 신고 기록'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('내가 남긴 생존신고와 체크포인트입니다. 관리자도 볼 수 있습니다.') }),
     panel(t('이동 경로'), null, trail.el),
     panel(t('기록'), null, box));
 }
@@ -391,7 +391,7 @@ export function printView({ state }) {
 
   return h('div', { class: 'page print-page' },
     h('div', { class: 'no-print' },
-      pageHeader(t('인쇄용 비상카드'), { crumbs: [{ label: t('설정'), href: '#/settings' }], lead: t('종이로 출력해 지갑과 생존배낭에 넣어 두세요. 휴대폰이 꺼져도 볼 수 있습니다.') },
+      pageHeader(t('인쇄용 비상카드'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('종이로 출력해 지갑과 생존배낭에 넣어 두세요. 휴대폰이 꺼져도 볼 수 있습니다.') },
         h('button', { class: 'btn', onClick: () => window.print() }, t('🖨 인쇄')))),
     h('div', { class: 'card print-card' },
       h('h2', null, t('{app} 카드', { app: t(config.appName || '가족 비상연락') })),

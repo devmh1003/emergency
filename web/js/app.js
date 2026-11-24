@@ -24,6 +24,7 @@ import { contactsView } from './views/contacts.js';
 import { guideView } from './views/guide.js';
 import { sosView } from './views/sos.js';
 import { suppliesView } from './views/supplies.js';
+import { moreView } from './views/more.js';
 import { settingsView, recordsView, printView } from './views/settings.js';
 
 const viewEl = document.getElementById('view');
@@ -120,6 +121,7 @@ const routes = [
   ['/sos', sosView],
   ['/supplies', suppliesView],
   ['/emergency', emergencyView],
+  ['/more', moreView],
   ['/settings', settingsView],
   ['/records', recordsView],
   ['/print', printView],
@@ -181,14 +183,17 @@ const NAV = [
   ['/settings', '⚙️', t('설정')],
 ];
 
-// 휴대폰 하단 메뉴는 5칸만. 관리자는 대처법 대신 관리자 설정 (대처법은 홈 바로가기에 있다).
-const BOTTOM_NAV = ['/', '/meet', '/protocols', '/family', '/settings'];
-const ADMIN_BOTTOM_NAV = ['/', '/meet', '/family', '/admin', '/settings'];
+// 휴대폰 하단 메뉴는 5칸만. 관리자는 대처법 대신 관리자 설정 (대처법은 홈 바로가기에 있다). 나머지 화면은 더보기에 모았다.
+const BOTTOM_NAV = ['/', '/meet', '/family', '/protocols', '/more'];
+const ADMIN_BOTTOM_NAV = ['/', '/meet', '/family', '/admin', '/more'];
 const ADMIN_NAV = ['/admin', '🛠', t('관리자')];
+const MORE_NAV = ['/more', '☰', t('더보기')];
+const MORE_SECTIONS = ['/more', '/settings', '/records', '/print', '/guide', '/contacts', '/sos', '/supplies', '/emergency'];
 
 function isActive(to, path) {
   const section = '/' + (path.split('/')[1] || '');
   if (to === '/') return path === '/';
+  if (to === '/more') return MORE_SECTIONS.includes(section) || (state.isAdmin && section === '/protocols');
   if (to === '/family') return section === '/family' || section === '/member';
   if (to === '/settings') return ['/settings', '/records', '/print', '/guide'].includes(section);
   return section === to;
@@ -233,9 +238,10 @@ function renderChrome() {
   const path = currentPath();
   mount(topNavEl, h('div', { class: 'top-nav-inner' },
     NAV.map(([to, , label]) => navLink(to, null, label, path)),
+    h('a', { href: '#/more', class: path === '/more' ? 'active' : null, 'aria-current': path === '/more' ? 'page' : null }, h('span', null, MORE_NAV[2])),
     state.isAdmin ? navLink(ADMIN_NAV[0], null, ADMIN_NAV[2], path, 'nav-admin') : null));
   const bottom = state.isAdmin ? ADMIN_BOTTOM_NAV : BOTTOM_NAV;
-  mount(navEl, bottom.map((to) => [...NAV, ADMIN_NAV].find(([x]) => x === to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
+  mount(navEl, bottom.map((to) => [...NAV, ADMIN_NAV, MORE_NAV].find(([x]) => x === to)).map(([to, icon, label]) => navLink(to, icon, label, path)));
   mount(bannerEl, state.online && state.serverReachable ? null : offlineBanner(), emergencyBanner());
   renderFooter();
 }

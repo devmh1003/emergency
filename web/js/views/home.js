@@ -1,5 +1,5 @@
-// 홈: 현재 상황, "나 무사해요" 생존신고, 바로가기, 가족 현황, 준비 상태, 현재 위치, 긴급 전화
-import { h, toast, busy, card, panel, alertBox, isIOS, ask } from '../dom.js';
+// 홈: 현재 상황 → "나 무사해요" → 긴급 전화 → (비상 중) 지금 할 일 → (관리자) 빠른 선언 → 바로가기 → 가족·준비·재난문자·위치
+import { h, toast, busy, panel, foldPanel, alertBox, isIOS, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { checkIn, notifyHelp, batteryLevel } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
@@ -54,20 +54,12 @@ function situation(state) {
   const e = state.emergency;
   const me = memberStatus(state.me, e);
   if (!e?.active) {
-    return alertBox('info', t('현재 비상 상황이 아닙니다'),
-      h('p', null, t('평상시에는 집합장소와 대처법을 미리 확인하고, 대비 체크리스트를 채워 두세요.')),
-      h('div', { class: 'alert-actions' },
-        h('a', { class: 'btn btn-sm', href: '#/protocols' }, t('대비 체크리스트')),
-        h('a', { class: 'btn btn-sm btn-outline', href: '#/guide' }, t('사용 안내'))));
+    return h('p', { class: 'calm-line' }, t('현재 비상 상황이 아닙니다'));
   }
   if (emergencyLevel(e) === 'alert') {
     return alertBox('warning', t('2급 비상 발령: {type}', { type: emergencyLabel(e.type) }),
       h('p', null, `${t('{name} · {time} 발령', { name: e.declaredByName || t('가족'), time: formatDateTime(e.declaredAt) })}${e.message ? ` — ${e.message}` : ''}`),
-      me.key === 'unknown' ? h('p', null, h('strong', null, t('아직 생존신고를 하지 않았습니다. 아래 버튼을 먼저 누르세요.'))) : null,
-      h('p', null, t('준위험 상황입니다. 비상 배낭·물·현금을 확인하고, 집합장소와 가는 길을 미리 봐 두세요. 1급 비상이 되면 경보음이 울립니다.')),
-      h('div', { class: 'alert-actions' },
-        h('a', { class: 'btn btn-sm', href: '#/meet' }, t('집합장소 확인')),
-        h('a', { class: 'btn btn-sm btn-outline', href: `#/protocols/${encodeURIComponent(e.type)}` }, t('대처법 보기'))));
+      me.key === 'unknown' ? h('p', null, h('strong', null, t('아직 생존신고를 하지 않았습니다. 아래 버튼을 먼저 누르세요.'))) : null);
   }
   const { currentRank, points } = meetingSchedule(state.meetingPoints, e);
   const target = points.find((p) => p.rank === currentRank);
@@ -78,31 +70,41 @@ function situation(state) {
     h('p', null, `${e.escalatedBy ? t('{name} · {time} 1급 격상', who) : t('{name} · {time} 선언', who)}${e.message ? ` — ${e.message}` : ''}`),
     me.key === 'unknown' ? h('p', null, h('strong', null, t('아직 생존신고를 하지 않았습니다. 아래 버튼을 먼저 누르세요.'))) : null,
     target ? h('p', null, t('지금 갈 곳: '), h('strong', null, `${t('{rank}순위', { rank: target.rank })} ${target.name}`),
-      ` · ${target.at > Date.now() ? t('도착까지') : t('대기 종료까지')} `, h('strong', { 'data-until': String(until) }, formatRemaining(until - Date.now()))) : null,
-    h('div', { class: 'alert-actions' },
-      h('a', { class: 'btn btn-sm', href: '#/meet', style: { background: '#fff', color: '#9c3d10' } }, t('집합장소 보기')),
-      h('a', { class: 'btn btn-sm', href: `#/protocols/${encodeURIComponent(e.type)}`, style: { background: 'transparent', boxShadow: 'inset 0 0 0 2px #fff' } }, t('대처법 보기'))));
+      ` · ${target.at > Date.now() ? t('도착까지') : t('대기 종료까지')} `, h('strong', { 'data-until': String(until) }, formatRemaining(until - Date.now()))) : null);
 }
 
-function tiles(state) {
+/** 비상 중: 지금 할 일을 순서대로. 신고를 마치면 첫 줄이 체크된다. */
+function todoPanel(state) {
+  const e = state.emergency;
+  if (!e?.active) return null;
+  const alert = emergencyLevel(e) === 'alert';
+  const reported = memberStatus(state.me, e).key !== 'unknown';
+  const step = (n, done, title, desc, href) => h('li', { class: done ? 'done' : null },
+    h(href ? 'a' : 'div', { class: 'menu-row', href },
+      h('span', { class: 'todo-num', 'aria-hidden': 'true' }, done ? '✓' : String(n)),
+      h('span', { class: 'menu-text' }, h('strong', null, title), h('span', null, desc)),
+      href ? h('span', { class: 'menu-arrow', 'aria-hidden': 'true' }, '›') : null));
+  return panel(t('지금 할 일'), null, h('ol', { class: 'menu-list todo' },
+    step(1, reported, t('생존신고'), reported ? t('신고했습니다. 상황이 바뀌면 다시 누르세요.') : t('위의 "나 무사해요"를 누르세요.')),
+    step(2, false, alert ? t('집합장소 확인') : t('집합장소로 이동'),
+      alert ? t('가는 길을 미리 봐 두세요. 시간은 1급 비상부터 시작합니다.') : t('지금 갈 곳과 남은 시간을 봅니다.'), '#/meet'),
+    step(3, false, t('대처법 보기'), t('{type} 때 해야 할 행동', { type: t(emergencyLabel(e.type)) }), `#/protocols/${encodeURIComponent(e.type)}`),
+    alert ? step(4, false, t('비상 물품'), t('비상 배낭·물·현금을 확인하세요. 1급 비상이 되면 경보음이 울립니다.'), '#/supplies') : null));
+}
+
+/** 하단 메뉴에 없는, 급할 때 바로 찾을 화면만. 나머지는 더보기에 있다. */
+function tiles() {
   const list = [
-    ['#/meet', '📍', t('집합장소'), t('1~10순위 장소와 시간, 거리·방향')],
-    ['#/protocols', '📘', t('상황별 대처법'), t('물 확보·대피 판단·붕괴 등 22가지')],
-    ['#/contacts', '☎️', t('비상 연락처'), t('119·112와 가족 지정 연락처')],
-    ['#/family', '👪', t('가족 현황'), state.isAdmin ? t('가족 전체 상태와 위치') : t('지정된 가족의 상태')],
-    ['#/sos', '🆘', t('구조 신호'), t('손전등·SOS 불빛·호루라기 소리')],
-    ['#/supplies', '📦', t('비상 물품'), t('물·식량·약 유통기한 관리')],
-    ['#/records', '🗂', t('내 신고 기록'), t('내가 남긴 위치와 시간')],
-    ['#/print', '🖨', t('인쇄용 비상카드'), t('지갑·배낭에 넣을 종이 카드')],
+    ['#/protocols', '📘', t('상황별 대처법')],
+    ['#/sos', '🆘', t('구조 신호')],
+    ['#/contacts', '☎️', t('비상 연락처')],
+    ['#/supplies', '📦', t('비상 물품')],
+    ['#/emergency', '🚨', t('비상 경보')],
+    ['#/guide', '📖', t('사용 안내')],
   ];
-  const admin = state.isAdmin ? [
-    ['#/admin', '🛠', t('관리자 설정'), t('비상 선언·해제, 소리 테스트, 가족 등록'), 'tile-admin'],
-    ['#/emergency', '🚨', t('비상 경보'), state.emergency?.active ? t('1급 격상·해제·테스트') : t('1급·2급 발령, 테스트 알람'), 'tile-admin tile-danger'],
-  ] : [['#/emergency', '🚨', t('비상 경보'), state.me.declareCredits >= 1 ? t('선언권 1회 남음 · 경보음 시험') : t('선언권 없음 · 경보음 시험'), 'tile-danger']];
-  return h('div', { class: 'tiles' }, [...list, ...admin].map(([href, icon, title, desc, cls = '']) => h('a', { class: `tile ${cls}`, href },
+  return h('div', { class: 'tiles tiles-compact' }, list.map(([href, icon, title]) => h('a', { class: 'tile', href },
     h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon),
-    h('strong', null, title),
-    h('span', null, desc))));
+    h('strong', null, title))));
 }
 
 /** 우리 지역에 온 최근 재난문자(알림 서버가 남김)와 가까운 대피소 찾기 */
@@ -172,6 +174,9 @@ export function homeView({ state, live, onChange }) {
     }
   });
 
+  // 메모는 필요할 때만 펼친다 (첫 화면에는 누를 버튼만)
+  const noteBox = h('details', { class: 'note-fold' }, h('summary', null, t('메모 덧붙이기 (선택)')), note);
+
   const safeBtn = h('button', { class: 'btn btn-safe btn-hero', onClick: (e) => run('safe', e.currentTarget) },
     t('나 무사해요'), h('small', null, t('누르면 GPS 위치와 시간이 가족에게 전달됩니다')));
   const helpBtn = h('button', {
@@ -200,17 +205,14 @@ export function homeView({ state, live, onChange }) {
   }, t('✉️ 문자로 알리기'));
 
   return h('div', { class: 'page' },
-    h('div', null,
-      h('p', { class: 'muted', style: { margin: 0, fontWeight: 600 } }, t('안녕하세요,')),
-      h('h1', null, t('{name}님', { name: state.me.name }))),
-    live(() => situation(state)),
-    // 관리자는 홈에서 바로 비상을 선언할 수 있다.
-    live(() => (state.emergency?.active ? null : quickDeclarePanel(state))),
+    h('div', { class: 'home-hello' },
+      h('h1', null, t('{name}님', { name: state.me.name })),
+      live(() => situation(state))),
 
-    panel(t('생존 신고'), null,
+    h('section', { class: 'card', 'aria-label': t('생존 신고') },
       safeBtn,
-      h('div', { style: { margin: '0.75rem 0' } }, note),
-      h('div', { class: 'row' }, helpBtn, smsBtn),
+      h('div', { class: 'report-actions' }, helpBtn, smsBtn),
+      noteBox,
       live(() => {
         const last = state.me.last;
         return h('p', { class: 'small muted center', style: { margin: '0.75rem 0 0' } },
@@ -221,8 +223,18 @@ export function homeView({ state, live, onChange }) {
           }) : t('아직 신고 기록이 없습니다.'));
       })),
 
+    live(() => todoPanel(state)),
+
+    h('div', { class: 'hotlines', role: 'group', 'aria-label': t('긴급 전화') },
+      h('a', { class: 'hotline hotline-red', href: 'tel:119' }, h('strong', null, '119'), h('span', null, t('화재·구조·구급'))),
+      h('a', { class: 'hotline', href: 'tel:112' }, h('strong', null, '112'), h('span', null, t('경찰'))),
+      h('a', { class: 'hotline', href: 'tel:1339' }, h('strong', null, '1339'), h('span', null, t('질병관리청')))),
+
+    // 관리자는 홈에서 바로 비상을 선언할 수 있다 (1급은 바로, 2급은 펼쳐서).
+    live(() => (state.emergency?.active ? null : quickDeclarePanel(state, { foldAlert: true }))),
+
     h('h2', { class: 'section-title' }, t('바로가기')),
-    live(() => tiles(state)),
+    tiles(),
 
     h('div', { class: 'grid grid-2' },
       panel(state.isAdmin ? t('가족 현황') : t('지정된 가족 현황'), { href: '#/family', label: t('전체 보기') },
@@ -233,7 +245,7 @@ export function homeView({ state, live, onChange }) {
 
     live(() => alertsPanel(state)),
 
-    panel(t('현재 위치'), null,
+    foldPanel(t('현재 위치'), { key: 'home-location', hint: t('내 좌표와 집합장소까지의 거리·방향') },
       locationPanel(state, {
         onChange,
         onPosition: (p) => { lastPos = p; },
@@ -242,14 +254,6 @@ export function homeView({ state, live, onChange }) {
           note.value = '';
         },
       })),
-
-    card(
-      h('h2', null, t('긴급 전화')),
-      h('div', { class: 'hotlines' },
-        h('a', { class: 'hotline hotline-red', href: 'tel:119' }, h('strong', null, '119'), h('span', null, t('화재·구조·구급'))),
-        h('a', { class: 'hotline', href: 'tel:112' }, h('strong', null, '112'), h('span', null, t('경찰'))),
-        h('a', { class: 'hotline', href: 'tel:1339' }, h('strong', null, '1339'), h('span', null, t('질병관리청')))),
-      h('p', { class: 'small', style: { margin: '0.75rem 0 0' } }, h('a', { href: '#/contacts' }, t('전체 비상 연락처 보기 →')))),
 
     live(() => (state.emergency?.active || state.isAdmin ? null
       : alertBox('warning', null,

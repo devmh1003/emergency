@@ -271,9 +271,7 @@ export const EN = {
   '내 신고 기록': 'My check-in history',
   '내가 남긴 위치와 시간': 'Locations and times you have reported',
   '인쇄용 비상카드': 'Printable emergency card',
-  '종이로 들고 다니기': 'Carry a paper copy',
   '비상 연락처': 'Emergency contacts',
-  '공공 번호와 가족 연락처': 'Public hotlines and family contacts',
   '로그아웃': 'Log out',
   '본인 휴대폰에서는 로그아웃하지 않는 것을 권장합니다. 로그아웃하면 이 휴대폰으로 비상 알림이 오지 않습니다.': 'We recommend staying logged in on your own phone. If you log out, this phone will not receive emergency alerts.',
   '로그아웃할까요? 이 휴대폰으로 비상 알림이 오지 않게 됩니다.': 'Log out? This phone will stop receiving emergency alerts.',
@@ -330,7 +328,6 @@ export const EN = {
   '이 휴대폰에서만 1급 경보음을 들어 봅니다. 가족에게는 아무 알림도 가지 않습니다.': 'Play the Level 1 siren on this phone only. No one in the family is notified.',
   '2급 비상은 경보음 없이 알림만 갑니다.': 'Level 2 emergencies send a notification only, with no siren.',
   '2급은 준위험 상황입니다. 알림만 가고 경보음은 울리지 않습니다. 생존신고를 하고 비상 배낭과 집합장소를 확인합니다. 1급은 지진·전쟁·대형재난 같은 큰 재난으로, 경보음과 알림이 함께 가고 이때부터 집합장소 시간이 계산되어 1순위 장소로 이동합니다. 2급에서 1급으로 올릴 수도 있습니다.': 'Level 2 is an elevated-risk situation: a notification goes out but no siren. Send a safety check-in and check your go-bag and meeting point. Level 1 is a major disaster such as an earthquake, war, or large-scale disaster: the siren and a notification go out together, meeting point times start counting, and you head to the priority 1 place. A Level 2 can be raised to Level 1.',
-  '준위험 상황입니다. 비상 배낭·물·현금을 확인하고, 집합장소와 가는 길을 미리 봐 두세요. 1급 비상이 되면 경보음이 울립니다.': 'This is an elevated-risk situation. Check your go-bag, water and cash, and review the meeting point and how to get there. The siren will sound if this becomes a Level 1 emergency.',
   // 경보음 파일, 경보 대기 모드, 받을 사람 고르기, 확인 창
   '예': 'Yes',
   '아니요': 'No',

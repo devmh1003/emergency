@@ -43,9 +43,45 @@ function progressOf(state, p) {
 }
 
 export function protocolsView({ state, live }) {
+  // 입력 칸은 live 밖에 두어 글자를 치는 동안 다시 그려지지 않게 한다.
+  const search = h('input', { type: 'search', placeholder: t('상황 찾기 (예: 지진, 물, 정전)'), 'aria-label': t('대처법 찾기'), maxlength: 40 });
+  const noMatch = h('div', { hidden: true }, empty(t('찾는 대처법이 없습니다. 다른 낱말로 찾아보세요.')));
+  const filter = () => {
+    const q = search.value.trim().toLowerCase();
+    const cards = [...document.querySelectorAll('.protocol-card')];
+    for (const a of cards) a.hidden = Boolean(q) && !a.dataset.search.includes(q);
+    // 제목에 그 낱말이 있는 것을 먼저, 나머지는 원래 순서대로
+    const rank = (a) => (q && a.querySelector('strong').textContent.toLowerCase().includes(q) ? 0 : 1);
+    cards.sort((a, b) => rank(a) - rank(b) || a.dataset.index - b.dataset.index).forEach((a) => a.parentNode.append(a));
+    noMatch.hidden = cards.some((a) => !a.hidden);
+  };
+  search.addEventListener('input', filter);
+
   return h('div', { class: 'page' },
-    pageHeader(t('상황별 대처법'), { lead: t('상황마다 지금 즉시, 몇 시간 안에, 며칠 동안 할 일과 준비물 체크리스트를 정리했습니다. 인터넷이 없어도 볼 수 있습니다.') },
+    pageHeader(t('상황별 대처법'), { lead: t('인터넷이 없어도 볼 수 있습니다.') },
       state.isAdmin ? h('a', { class: 'btn btn-outline', href: '#/admin/protocols' }, t('대처법 관리')) : null),
+    search,
+    noMatch,
+    live(() => {
+      const current = state.emergency?.active ? state.emergency.type : null;
+      const list = [...state.protocols].sort((a, b) => (a.id === current ? -1 : b.id === current ? 1 : 0));
+      if (!list.length) return empty(t('등록된 대처법이 없습니다.'));
+      // 다시 그린 뒤에도 찾기 결과를 유지한다.
+      queueMicrotask(filter);
+      return h('div', null,
+        current ? alertBox('emergency', t('지금 상황: {label}', { label: emergencyLabel(current) }), h('p', null, t('해당 대처법을 맨 앞에 두었습니다.'))) : null,
+        h('div', { class: 'protocol-grid', style: { marginTop: current ? '1rem' : 0 } }, list.map((p, index) => {
+          const pr = progressOf(state, p);
+          const words = [p.title, p.summary, ...(p.keyPoints || []), ...(p.steps || []).flatMap((s) => s.items)].filter(Boolean).join(' ').toLowerCase();
+          return h('a', { class: `protocol-card${p.id === current ? ' current' : ''}`, href: `#/protocols/${encodeURIComponent(p.id)}`, 'data-search': words, 'data-index': index },
+            h('span', { class: 'protocol-icon', 'aria-hidden': 'true' }, p.icon || '📄'),
+            h('span', { class: 'protocol-text' },
+              h('strong', null, p.title),
+              p.summary ? h('span', { class: 'protocol-summary' }, p.summary) : null,
+              pr.total && pr.checked ? h('span', null, h('span', { class: `tag ${pr.checked === pr.total ? 'status-safe' : 'tag-light'}` }, t('준비 {done}/{total}', { done: pr.checked, total: pr.total }))) : null),
+            h('span', { class: 'menu-arrow', 'aria-hidden': 'true' }, '›'));
+        })));
+    }),
     live(() => {
       const all = checklistProgress(state.protocols, state.checklist);
       return h('div', { class: 'card' },
@@ -55,22 +91,6 @@ export function protocolsView({ state, live }) {
             h('strong', null, t('나의 대비 상태')),
             h('div', { class: 'progress' }, h('div', { class: 'progress-bar', style: { width: `${all.percent}%` } })),
             h('div', { class: 'small muted' }, t('전체 체크리스트 {done}/{total}개 완료', { done: all.checked, total: all.total })))));
-    }),
-    live(() => {
-      const current = state.emergency?.active ? state.emergency.type : null;
-      const list = [...state.protocols].sort((a, b) => (a.id === current ? -1 : b.id === current ? 1 : 0));
-      if (!list.length) return empty(t('등록된 대처법이 없습니다.'));
-      return h('div', null,
-        current ? alertBox('emergency', t('지금 상황: {label}', { label: emergencyLabel(current) }), h('p', null, t('해당 대처법을 맨 앞에 두었습니다.'))) : null,
-        h('div', { class: 'protocol-grid', style: { marginTop: current ? '1rem' : 0 } }, list.map((p) => {
-          const pr = progressOf(state, p);
-          return h('a', { class: `protocol-card${p.id === current ? ' current' : ''}`, href: `#/protocols/${encodeURIComponent(p.id)}` },
-            h('span', { class: 'protocol-icon', 'aria-hidden': 'true' }, p.icon || '📄'),
-            h('span', { class: 'protocol-text' },
-              h('strong', null, p.title),
-              p.summary ? h('span', null, p.summary) : null,
-              pr.total ? h('span', null, h('span', { class: `tag ${pr.checked === pr.total ? 'status-safe' : 'tag-light'}` }, t('준비 {done}/{total}', { done: pr.checked, total: pr.total }))) : null));
-        })));
     }));
 }
 

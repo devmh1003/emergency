@@ -1,5 +1,5 @@
 // 비상 경보 화면(2급 → 1급), 빠른 선언, 전체 화면 경보, 테스트 알람
-import { h, field, select, formData, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table, ask, nativeApp } from '../dom.js';
+import { h, field, select, formData, toast, savedToast, busy, panel, foldPanel, pageHeader, empty, alertBox, table, ask, nativeApp } from '../dom.js';
 import { errorMessage, callWorker } from '../firebase.js';
 import { t } from '../i18n.js';
 import {
@@ -256,7 +256,7 @@ export function emergencyView({ state, onChange, navigate }) {
   window.addEventListener('hashchange', () => unsubs.forEach((u) => u()), { once: true });
 
   return h('div', { class: 'page' },
-    pageHeader(t('비상 경보'), { lead: t('비상은 2단계입니다. 준위험 상황은 "2급"(알림만), 지진·전쟁·대형재난 같은 큰 재난은 "1급"(경보음 + 알림). 1급 비상부터 집합장소 시간이 계산됩니다.') }),
+    pageHeader(t('비상 경보'), { crumbs: [{ label: t('더보기'), href: '#/more' }], lead: t('비상은 2단계입니다. 준위험 상황은 "2급"(알림만), 지진·전쟁·대형재난 같은 큰 재난은 "1급"(경보음 + 알림). 1급 비상부터 집합장소 시간이 계산됩니다.') }),
     guideBox,
     quickBox,
     main,
@@ -422,7 +422,10 @@ const QUICK_DECLARE = [
   { level: 'alert', title: '2급 비상 — 알림만 (준위험)', items: [['flood', '🌀'], ['fire', '🔥'], ['heat', '🌡️'], ['cold', '❄️'], ['blackout', '🔌'], ['pandemic', '🦠'], ['other', '⚠️']] },
 ];
 
-export function quickDeclarePanel(state, { flat = false } = {}) {
+// 홈에서 접어 둔 2급 버튼을 펼쳤는지 (상태가 바뀌어 다시 그려져도 유지)
+let alertOpen = false;
+
+export function quickDeclarePanel(state, { flat = false, foldAlert = false } = {}) {
   if (!state.isAdmin) return null;
   const button = (level, type, icon) => {
     const name = t(emergencyLabel(type));
@@ -434,7 +437,7 @@ export function quickDeclarePanel(state, { flat = false } = {}) {
         const warn = level === 'real'
           ? t('1급 비상({type})을 선언할까요? 가족 모두에게 경보음과 알림이 갑니다.', { type: name })
           : t('2급 비상({type})을 발령할까요? 가족 모두에게 알림이 갑니다 (경보음 없음).', { type: name });
-        if (!(await ask(warn, { danger: level === 'real' }))) return;
+        if (!(await ask(warn, { ok: t('알리기'), cancel: t('취소'), danger: level === 'real' }))) return;
         busy(target, async () => {
           try {
             const r = await declareEmergency(state.me, { level, type, message: '' });
@@ -452,10 +455,14 @@ export function quickDeclarePanel(state, { flat = false } = {}) {
   };
   const body = [
     h('p', { class: 'muted small' }, t('상황을 누르고 확인하면 바로 가족 모두에게 갑니다.')),
-    QUICK_DECLARE.map((g) => [
-      h('h3', { class: `panel-subhead quick-head-${g.level}` }, t(g.title)),
-      h('div', { class: 'quick-grid' }, g.items.map(([type, icon]) => button(g.level, type, icon))),
-    ]),
+    QUICK_DECLARE.map((g) => {
+      const grid = h('div', { class: 'quick-grid' }, g.items.map(([type, icon]) => button(g.level, type, icon)));
+      if (!foldAlert || g.level !== 'alert') return [h('h3', { class: `panel-subhead quick-head-${g.level}` }, t(g.title)), grid];
+      const box = h('details', { class: 'quick-fold' }, h('summary', { class: 'quick-head-alert' }, t(g.title)), grid);
+      box.open = alertOpen;
+      box.addEventListener('toggle', () => { alertOpen = box.open; });
+      return box;
+    }),
   ];
   if (flat) return h('div', { class: 'quick-flat' }, h('h3', { class: 'panel-subhead' }, t('⚡ 빠른 비상 선언')), body);
   return panel(t('⚡ 빠른 비상 선언'), null, body);
@@ -533,7 +540,7 @@ export function testPanel(state, unsubs, onChange) {
       nativeApp ? h('button', { type: 'button', class: 'btn btn-outline', onClick: () => nativeApp.testAlarm() }, t('📱 앱 전체 화면 경보 시험')) : null),
     h('p', { class: 'muted small' }, t('2급 비상은 경보음 없이 알림만 갑니다. 테스트 알림은 알림을 켠 내 기기로만 갑니다.'), ' ',
       h('a', { href: '#/settings' }, t('화면이 꺼져도 울리게: 설정 → 경보 대기 모드 →'))));
-  if (!state.isAdmin) return panel(t('🔊 소리·알림 테스트'), null, local);
+  if (!state.isAdmin) return foldPanel(t('🔊 소리·알림 테스트'), { hint: t('경보음과 알림이 잘 오는지 확인') }, local);
 
   // 받을 사람 (기본: 나를 뺀 가족 모두). 가족 목록이 바뀌면 다시 그리고, 고른 상태는 유지한다.
   const people = () => state.members.filter((m) => m.active && m.id !== state.me.id);
@@ -627,13 +634,11 @@ export function testPanel(state, unsubs, onChange) {
   unsubs.push(() => ackUnsub?.());
 
   // 관리자: 가족에게 보내는 테스트 경보를 먼저, 이 휴대폰에서만 하는 시험은 아래에
-  const box = panel(t('🔔 테스트 경보'), null,
+  return foldPanel(t('🔔 테스트 경보'), { id: 'test-alarm', hint: t('경보음과 알림이 잘 오는지 확인') },
     h('h3', { class: 'panel-subhead' }, t('가족에게 테스트 경보 보내기')),
     h('p', null, t('고른 가족의 휴대폰에서 "테스트" 표시와 함께 경보가 울립니다. 각자 확인을 누르면 아래 표에 표시됩니다. 실제 경보 상태는 바뀌지 않습니다.')),
     form,
     resultBox,
     h('h3', { class: 'panel-subhead' }, t('이 휴대폰에서만 시험')),
     local);
-  box.id = 'test-alarm';
-  return box;
 }

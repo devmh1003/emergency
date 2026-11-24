@@ -1,6 +1,6 @@
 // 관리자 설정: 비상 선언·격상·해제, 소리·알림 테스트, 가족 등록·관리, 설정 바로가기를 한 화면에서.
 // 기록은 맨 아래에 최근 몇 줄만 보여주고, 전체는 관리자 기록 화면에서 본다.
-import { h, field, select, formData, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table } from '../dom.js';
+import { h, field, select, formData, toast, savedToast, busy, panel, foldPanel, menuList, pageHeader, empty, alertBox, table } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
@@ -160,7 +160,7 @@ function disasterPanel(state, unsubs) {
     hit.replaceChildren(lastHit(feed));
   }, () => status.replaceChildren(h('p', { class: 'muted small' }, t('상태를 불러오지 못했습니다.')))));
 
-  return panel(t('📡 정부 재난문자 자동 경보'), null,
+  return foldPanel(t('📡 정부 재난문자 자동 경보'), { hint: t('재난문자가 오면 비상을 자동 선언') },
     h('p', { class: 'small' }, t('행정안전부 긴급재난문자를 1~2분마다 확인합니다. 공습·경계경보 같은 위급재난과 지진·지진해일 문자가 우리 지역에 오면 1급 비상을 자동으로 선언해 가족 모두의 휴대폰에서 경보음이 울립니다.')),
     h('p', { class: 'muted small' }, t('조회는 하루 1,000번까지라 남은 횟수를 자정까지 나눠 씁니다. 우리 지역에 긴급 재난문자가 오거나 비상 중일 때는 1분마다 봅니다.')),
     h('p', { class: 'muted small' }, t('안전안내 문자, 훈련 안내, 해제 안내로는 울리지 않습니다. 이미 비상 중이면 새로 선언하지 않고, 해제는 관리자가 직접 합니다.')),
@@ -196,7 +196,7 @@ function lockPanel(unsubs) {
         }),
       }, locked.includes(l) ? t('잠금 풀기') : t('기록 지우기'))))));
   }, () => box.replaceChildren(h('p', { class: 'muted small' }, t('상태를 불러오지 못했습니다.')))));
-  return panel(t('🔒 접속 잠금'), null,
+  return foldPanel(t('🔒 접속 잠금'), { hint: t('코드를 틀려 잠긴 가족 풀어 주기') },
     h('p', { class: 'small muted' }, t('같은 휴대폰이나 같은 인터넷(집 와이파이 등)에서 접속 코드를 3번 틀리면 하루 동안 새로 들어올 수 없습니다. 이미 들어와 있는 휴대폰은 그대로 씁니다. 가족이 실수로 잠겼다면 풀어 주세요.')),
     box);
 }
@@ -226,7 +226,12 @@ export function adminHubView({ state, live, onChange }) {
     pageHeader(t('관리자 설정'), { lead: t('비상 선언과 해제, 소리·알림 테스트, 가족 등록을 이 화면에서 합니다.') },
       h('button', {
         type: 'button', class: 'btn btn-outline',
-        onClick: () => document.getElementById('test-alarm')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+        onClick: () => {
+          const box = document.getElementById('test-alarm');
+          if (!box) return;
+          box.open = true;
+          box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        },
       }, t('🔔 테스트 경보'))),
 
     panel(t('🚨 비상 선언·해제'), { href: '#/emergency', label: t('비상 경보 화면') },
@@ -238,13 +243,7 @@ export function adminHubView({ state, live, onChange }) {
           familyStatusList(state, { compact: true }))
         : null))),
 
-    disasterPanel(state, unsubs),
-
-    lockPanel(unsubs),
-
-    tests,
-
-    panel(t('👪 가족 등록·관리'), { href: '#/family', label: t('가족 현황') },
+    foldPanel(t('👪 가족 등록·관리'), { hint: t('가족 추가, 권한, 비상선언권') },
       h('h3', { class: 'panel-subhead' }, t('가족 등록')),
       quickAddForm(state),
       h('p', { class: 'muted small' }, t('등록하면 바로 로그인 목록에 이름이 올라갑니다. 가족에게는 가족 코드를 알려 주세요. 주소·비상연락처 같은 개인정보와 "볼 수 있는 가족"은 수정에서 넣습니다.')),
@@ -252,9 +251,13 @@ export function adminHubView({ state, live, onChange }) {
       live(() => memberTable(state)),
       h('p', { class: 'small' }, h('a', { href: '#/admin/member/new' }, t('개인정보까지 한 번에 입력해서 추가하기 →')))),
 
-    panel(t('⚙️ 설정 바로가기'), null,
-      h('div', { class: 'tiles' }, SHORTCUTS.map(([href, icon, title, desc]) => h('a', { class: 'tile tile-admin', href },
-        h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, icon), h('strong', null, t(title)), h('span', null, t(desc)))))),
+    tests,
+
+    disasterPanel(state, unsubs),
+
+    lockPanel(unsubs),
+
+    panel(t('⚙️ 설정 바로가기'), null, menuList(SHORTCUTS.map(([href, icon, title, desc]) => [href, icon, t(title), t(desc)]))),
 
     panel(t('최근 기록'), { href: '#/admin/logs', label: t('전체 기록') }, logBox));
 }
