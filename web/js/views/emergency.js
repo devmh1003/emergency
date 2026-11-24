@@ -306,7 +306,7 @@ function endButton(state) {
       if (!(await ask(t('경보를 해제할까요? 가족 모두에게 해제 알림이 갑니다.')))) return;
       busy(target, async () => {
         try {
-          const r = await endEmergency(state.me);
+          const r = await endEmergency(state.me, state.meetingPoints);
           if (r?.queued) queuedToast('end');
           else toast(r?.error ? t('해제됐습니다. 알림 발송 실패: {error}', { error: r.error }) : t('경보를 해제했습니다.'));
         } catch (err) {

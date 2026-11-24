@@ -4,7 +4,7 @@ import {
   writeBatch, serverTimestamp, Timestamp, deleteField,
 } from 'https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js';
 import {
-  db, auth, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
+  db, auth, config, callWorker, createAccount, newAccountEmail, randomToken, signIn, signInWithToken, logout, deviceId,
 } from './firebase.js';
 import { DEFAULT_PROTOCOLS, RETIRED_PROTOCOL_IDS } from './data/protocols.js';
 import { SUPPLY_PRESETS, lastTypeAfter } from './logic.js';
@@ -63,10 +63,39 @@ export async function getProfile(uid) {
  * @returns {Promise<'sent'|'queued'>}
  */
 export function commitWithTimeout(promise, ms = 5000) {
+  let queued = false;
+  // "보관됨"이라고 알린 뒤 서버가 거부하면 따로 알린다.
+  promise.catch((err) => { if (queued) onLateError(err); });
   return Promise.race([
     promise.then(() => 'sent'),
-    new Promise((resolve) => setTimeout(() => resolve('queued'), ms)),
+    new Promise((resolve) => setTimeout(() => { queued = true; resolve('queued'); }, ms)),
   ]);
+}
+
+let onLateError = () => {};
+export function setLateErrorHandler(fn) {
+  onLateError = fn;
+}
+
+// ---------- 휴대폰 시계 보정 ----------
+// 신고 시각은 휴대폰 시계로 적는다(오프라인에서 누른 시각을 남기려고). 시계가 틀리면 신고가 비상 전의 것으로 보이거나
+// 미래 시각이라 거부되므로, 알림 서버 시각과의 차이를 재서 맞춘다. 저장하지 않는다(시계를 고친 뒤 틀린 값을 쓰지 않게).
+let clockOffset = 0;
+const CLOCK_TOLERANCE_MS = 30_000;
+
+export const clockNow = () => new Date(Date.now() + clockOffset);
+
+export async function syncClock() {
+  if (!config.workerUrl) return;
+  try {
+    const sentAt = Date.now();
+    const started = performance.now();
+    const { now } = await (await fetch(`${config.workerUrl.replace(/\/$/, '')}/`, { cache: 'no-store' })).json();
+    const took = performance.now() - started;
+    if (!Number.isFinite(now) || took > 5000) return;
+    const off = now - (sentAt + took / 2);
+    clockOffset = Math.abs(off) > CLOCK_TOLERANCE_MS ? Math.round(off) : 0;
+  } catch { /* 오프라인이면 다음에 */ }
 }
 
 // ---------- 생존신고·체크포인트 ----------
@@ -89,7 +118,7 @@ export async function batteryLevel() {
 }
 
 export function checkIn(me, type, pos, note = '', emergency = null, battery = null, { lastType } = {}) {
-  const clientAt = Timestamp.now();
+  const clientAt = Timestamp.fromDate(clockNow());
   const loc = {
     lat: pos?.lat ?? null,
     lng: pos?.lng ?? null,
@@ -125,9 +154,49 @@ export function checkIn(me, type, pos, note = '', emergency = null, battery = nu
  */
 export async function notifyHelp() {
   try {
-    return await callWorker('/help');
+    const r = await callWorker('/help');
+    if (r.sent || !r.failed) setHelpPending(null);
+    return r;
   } catch (err) {
     return { error: err.message };
+  }
+}
+
+// 아직 보내지 못한 도움 요청 알림 (이 휴대폰에만 저장). 오프라인이었거나 앱을 닫았거나 발송이 실패하면 남는다.
+const HELP_PENDING_KEY = 'family.helpPending';
+const HELP_PENDING_MS = 24 * 3600e3;
+// 알림 서버는 저장된 지 10분 안의 도움 요청만 보낸다.
+const HELP_FRESH_MS = 10 * 60e3;
+const HELP_FIRST_TRY_MS = 20_000;
+
+export function setHelpPending(uid) {
+  try {
+    if (uid) localStorage.setItem(HELP_PENDING_KEY, JSON.stringify({ uid, at: Date.now() }));
+    else localStorage.removeItem(HELP_PENDING_KEY);
+  } catch { /* 무시 */ }
+}
+
+let helpRetrying = false;
+
+/** 못 보낸 도움 요청 알림을 다시 보낸다. 보냈으면 결과, 할 일이 없으면 null. 신고가 서버에 저장된 뒤에 부른다. */
+export async function retryHelp(me) {
+  let pending = null;
+  try { pending = JSON.parse(localStorage.getItem(HELP_PENDING_KEY) || 'null'); } catch { /* 무시 */ }
+  if (!pending || helpRetrying || pending.uid !== me.id) return null;
+  const age = Date.now() - pending.at;
+  // 누른 직후에는 화면이 위치를 잠깐 기다렸다가 직접 보낸다.
+  if (age < HELP_FIRST_TRY_MS) return null;
+  const savedAt = me.last?.at?.toDate?.();
+  if (age > HELP_PENDING_MS || me.last?.type !== 'help' || (savedAt && clockNow() - savedAt > HELP_FRESH_MS)) {
+    setHelpPending(null);
+    return null;
+  }
+  helpRetrying = true;
+  try {
+    const r = await notifyHelp();
+    return r.sent ? r : null;
+  } finally {
+    helpRetrying = false;
   }
 }
 
@@ -182,7 +251,8 @@ export async function escalateEmergency(me, current, message = '') {
   return commitAndNotify(batch.commit());
 }
 
-export async function endEmergency(me) {
+/** points: 집합장소. 이번 비상 때 직접 정한 도착 시각을 함께 지운다 (다음 비상에 남지 않게). */
+export async function endEmergency(me, points = []) {
   const batch = writeBatch(db);
   batch.set(ref('emergency', 'current'), {
     active: false,
@@ -193,13 +263,14 @@ export async function endEmergency(me) {
   batch.set(doc(collection(db, 'emergencyLog')), {
     action: 'end', by: me.id, byName: me.name, at: serverTimestamp(),
   });
+  for (const p of points) if (p.overrideAt) batch.update(ref('meetingPoints', String(p.rank)), { overrideAt: null, updatedAt: serverTimestamp() });
   return commitAndNotify(batch.commit());
 }
 
 /**
  * 선언·격상·해제 공통: 서버에 저장되면 알림 서버에 발송을 요청한다.
  * 오프라인이면 선언은 휴대폰에 보관되고(화면에는 바로 반영) { queued: true } 를 돌려준다.
- * 연결돼 저장되는 순간 그때 알림을 보낸다 (앱이 열려 있는 동안).
+ * 연결돼 저장되면 그때 알림을 보낸다. 앱이 요청하지 못해도 알림 서버가 1분 안에 저장된 비상을 보고 보낸다.
  */
 async function commitAndNotify(commit) {
   const notified = commit.then(() => notifyFamily());
@@ -635,7 +706,7 @@ export function addMeetingLog(me, rank, message) {
     name: me.name,
     message: message.slice(0, 300),
     at: serverTimestamp(),
-    clientAt: Timestamp.now(),
+    clientAt: Timestamp.fromDate(clockNow()),
   });
   return commitWithTimeout(batch.commit());
 }

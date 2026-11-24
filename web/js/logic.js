@@ -80,7 +80,10 @@ export function meetingSchedule(points, emergency, now = new Date()) {
 
   let currentRank = null;
   const out = sorted.map((p) => {
-    const at = toDate(p.overrideAt) || new Date(declaredAt.getTime() + (Number(p.offsetHours) || 0) * HOUR);
+    // 이번 비상보다 앞선 시각은 지난 비상 때 정한 것이라 쓰지 않는다.
+    const override = toDate(p.overrideAt);
+    const began = toDate(emergency.declaredAt) || declaredAt;
+    const at = override && override.getTime() >= began.getTime() ? override : new Date(declaredAt.getTime() + (Number(p.offsetHours) || 0) * HOUR);
     const deadline = new Date(at.getTime() + (Number(p.waitMinutes) || 0) * MINUTE);
     let state;
     if (currentRank === null && deadline.getTime() >= now.getTime()) {

@@ -253,6 +253,15 @@ function offlineBanner() {
       : t('오프라인 상태입니다. 저장된 정보를 보여주고, 생존신고는 휴대폰에 보관했다가 연결되면 자동 전송합니다. GPS 위치 확인은 계속 됩니다.')));
 }
 
+/** 못 보낸 도움 요청 알림이 있으면 다시 보낸다 (신고가 서버에 저장된 것을 확인한 뒤). */
+let helpSaved = false;
+function tryPendingHelp() {
+  if (!state.me || !helpSaved || !state.online) return;
+  store.retryHelp(state.me)
+    .then((r) => { if (r) toast(t('도움 요청 알림을 {n}명에게 보냈습니다.', { n: r.recipients?.length ?? r.sent })); })
+    .catch(() => {});
+}
+
 // 서버에 닿지 않는 상태가 잠깐(처음 열 때 저장본을 먼저 보여 주는 순간)이 아니라 이어질 때만 띠를 보인다.
 let unreachableTimer = null;
 function noteServerReachable(reachable) {
@@ -312,8 +321,14 @@ function renderFooter() {
         h('span', null, t('버전 {build}', { build: document.documentElement.dataset.build || 'dev' })))));
 }
 
-// 남은 시간 표시(data-until)는 30초마다 갱신
+// 남은 시간 표시(data-until)는 30초마다 갱신하고, 집합 시간이 지나 "지금 갈 곳"이 바뀌면 화면도 다시 그린다.
+let shownRank = null;
 setInterval(() => {
+  if (state.me) {
+    const { currentRank } = meetingSchedule(state.meetingPoints, state.emergency);
+    if (currentRank !== shownRank) { shownRank = currentRank; notify(); }
+    tryPendingHelp();
+  }
   for (const el of document.querySelectorAll('[data-until]')) {
     el.textContent = formatRemaining(Number(el.dataset.until) - Date.now());
   }
@@ -430,6 +445,7 @@ function startSubscriptions(uid) {
     // 방금 등록한 문서가 아직 서버에 저장되기 전이면 기다린다. 서버가 모르는 상태로 구독하면 거부된다.
     if (!active && snap.metadata.hasPendingWrites) return;
     noteServerReachable(!snap.metadata.fromCache);
+    helpSaved = !snap.metadata.fromCache && !snap.metadata.hasPendingWrites;
     state.me = me && me.active && state.gates && me.gen === state.gates.gen ? me : null;
     store.setActor(state.me);
     // 오프라인인데 휴대폰에 내 정보(또는 접속 정보)가 저장돼 있지 않으면, 계정 문제가 아니라 인터넷 문제다.
@@ -469,6 +485,7 @@ function startSubscriptions(uid) {
       if (!state.isAdmin) syncLinkSubscriptions();
       notify();
     }
+    tryPendingHelp();
   }, (err) => {
     console.error(err);
     mount(viewEl, notRegisteredView(state.user));
@@ -595,7 +612,12 @@ function start() {
     const resume = () => startStandby().then((ok) => { if (ok) document.removeEventListener('pointerdown', resume, true); });
     document.addEventListener('pointerdown', resume, true);
   }
-  window.addEventListener('online', () => { state.online = true; renderChrome(); });
+  store.setLateErrorHandler((err) => {
+    console.error(err);
+    ask(t('보관했던 내용을 서버가 저장하지 않았습니다. 다시 시도하고, 급하면 전화나 문자로 알리세요.'), { ok: t('확인'), cancel: t('닫기') });
+  });
+  store.syncClock();
+  window.addEventListener('online', () => { state.online = true; renderChrome(); store.syncClock(); });
   window.addEventListener('offline', () => { state.online = false; renderChrome(); });
   renderChrome();
 
@@ -644,7 +666,9 @@ function start() {
 
 // 화면이 다시 보일 때 남은 시간 즉시 갱신
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && state.me) notify();
+  if (document.visibilityState !== 'visible') return;
+  store.syncClock();
+  if (state.me) notify();
 });
 
 window.addEventListener('error', (e) => {
