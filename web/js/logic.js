@@ -218,6 +218,11 @@ export function memberStatus(member, emergency) {
   return { key: 'idle', label: t('마지막: {label}', { label: checkinLabel(last.type) }), lastAt };
 }
 
+/** 빠른 상태(갇힘, 이동 중 등)를 메모 앞에 붙인다. 따로 저장하지 않아 예전 버전에서도 메모로 보인다. */
+export function quickNote(...parts) {
+  return parts.map((p) => (p || '').trim()).filter(Boolean).join(' · ').slice(0, 300);
+}
+
 /**
  * 새 신고 뒤에 가족에게 보일 마지막 상태. 도움을 요청한 사람이 체크포인트를 남겨도 도움 요청은 그대로 둔다
  * ("나 무사해요"를 눌러야 풀린다). 지난 비상의 도움 요청, 비상이 아닐 때 하루 지난 도움 요청은 이어 가지 않는다.

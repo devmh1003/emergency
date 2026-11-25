@@ -1,12 +1,12 @@
 // 홈: 현재 상황 → "나 무사해요" → 긴급 전화 → (비상 중) 지금 할 일 → (관리자) 빠른 선언 → 바로가기 → 가족·준비·재난문자·위치
-import { h, toast, busy, panel, foldPanel, alertBox, isIOS, ask } from '../dom.js';
+import { h, toast, busy, panel, foldPanel, alertBox, isIOS, choose } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import { checkIn, notifyHelp, setHelpPending, batteryLevel } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
 import {
   checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, helpSmsBody, smsHref,
   emergencyLabel, emergencyLevel, levelActor, realStartedAt, meetingSchedule, checklistProgress, checklistKey,
-  suppliesStatus, toDate, shelterLinks,
+  suppliesStatus, toDate, shelterLinks, quickNote,
 } from '../logic.js';
 import { t } from '../i18n.js';
 import { familyStatusList, statusSummary } from './family.js';
@@ -188,7 +188,18 @@ export function homeView({ state, live, onChange }) {
     const text = note.value.trim();
     noteTitle.textContent = text ? t('함께 보낼 메모: {text}', { text }) : t('메모 덧붙이기 (선택)');
   };
+  // 지금 있는 곳을 글 없이 고른다 (다시 누르면 취소)
+  let place = '';
+  const places = [t('이동 중'), t('집'), t('대피소')].map((label) => h('button', {
+    type: 'button', class: 'btn btn-sm btn-outline', 'aria-pressed': 'false',
+    onClick: () => { place = place === label ? '' : label; drawPlaces(); },
+  }, label));
+  const drawPlaces = () => { for (const b of places) b.setAttribute('aria-pressed', String(b.textContent === place)); };
+  const placeRow = h('div', { class: 'place-row', role: 'group', 'aria-label': t('지금 있는 곳 (선택)') },
+    h('span', { class: 'small muted' }, t('지금 있는 곳 (선택)')), places);
   const clearNote = () => {
+    place = '';
+    drawPlaces();
     note.value = '';
     noteBox.open = false;
     drawNote();
@@ -196,9 +207,9 @@ export function homeView({ state, live, onChange }) {
   note.addEventListener('input', drawNote);
   drawNote();
 
-  const run = (type, button, after = null) => busy(button, async () => {
+  const run = (type, button, after = null, status = '') => busy(button, async () => {
     const original = [...button.childNodes];
-    const text = note.value.trim();
+    const text = quickNote(status, place, note.value);
     button.textContent = t('보내는 중…');
     try {
       const { located } = await report(state, type, text, null);
@@ -218,8 +229,16 @@ export function homeView({ state, live, onChange }) {
     class: 'btn btn-secondary btn-lg',
     onClick: async (e) => {
       const target = e.currentTarget;
-      if (!note.value.trim() && !(await ask(t('도움 요청을 보낼까요? 관련 가족의 휴대폰에 내 위치와 함께 알림이 가고, 이어서 문자 앱이 열립니다. 메모에 상황을 적으면 더 빨리 도울 수 있습니다.')))) return;
-      run('help', target, (text, pos) => sendHelp(state, text, pos));
+      // 메모를 적었으면 바로 보낸다.
+      let status = '';
+      if (!note.value.trim()) {
+        status = await choose(t('어떤 상황인가요? 누르면 바로 가족에게 위치와 함께 알리고, 이어서 문자 앱이 열립니다.'), [
+          ...[t('갇힘'), t('움직일 수 없음'), t('위험')].map((label) => ({ value: label, label, cls: 'btn-secondary' })),
+          { value: '', label: t('고르지 않고 보내기'), cls: 'btn-outline choose-wide' },
+        ]);
+        if (status === null) return;
+      }
+      run('help', target, (text, pos) => sendHelp(state, text, pos), status);
     },
   }, t('🆘 도움 요청'));
 
@@ -247,6 +266,7 @@ export function homeView({ state, live, onChange }) {
     h('section', { class: 'card', 'aria-label': t('생존 신고') },
       safeBtn,
       h('div', { class: 'report-actions' }, helpBtn, smsBtn),
+      placeRow,
       noteBox,
       live(() => {
         const last = state.me.last;
@@ -285,7 +305,7 @@ export function homeView({ state, live, onChange }) {
         onChange,
         onPosition: (p) => { lastPos = p; },
         onCheckpoint: async (p) => {
-          await report(state, 'checkpoint', note.value.trim(), p);
+          await report(state, 'checkpoint', quickNote(place, note.value), p);
           clearNote();
         },
       })),

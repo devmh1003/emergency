@@ -8,7 +8,7 @@ import {
 } from '../web/js/logic.js';
 import { DEFAULT_PROTOCOLS } from '../web/js/data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from '../web/js/data/protocols.en.js';
-import { lastTypeAfter } from '../web/js/logic.js';
+import { lastTypeAfter, quickNote } from '../web/js/logic.js';
 import { expiryState, suppliesStatus, shelterLinks } from '../web/js/logic.js';
 
 const T0 = new Date('2026-10-27T09:00:00+09:00');
@@ -119,6 +119,12 @@ test('지난 비상 때 직접 정한 도착 시각은 이번 비상에 쓰지 �
   const p = (overrideAt) => meetingSchedule([{ rank: 1, offsetHours: 1, waitMinutes: 60, overrideAt }], e, at(0.5)).points[0].at.getTime();
   assert.equal(p(at(-700)), at(1).getTime());
   assert.equal(p(at(3)), at(3).getTime());
+});
+
+test('빠른 상태는 메모 앞에 붙고 300자를 넘지 않는다', () => {
+  assert.equal(quickNote('갇힘', '', ' 3층 '), '갇힘 · 3층');
+  assert.equal(quickNote('', '', ''), '');
+  assert.equal(quickNote('위험', '집', 'x'.repeat(400)).length, 300);
 });
 
 test('나이 계산', () => {
