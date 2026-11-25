@@ -8,7 +8,7 @@ import {
 } from '../web/js/logic.js';
 import { DEFAULT_PROTOCOLS } from '../web/js/data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from '../web/js/data/protocols.en.js';
-import { lastTypeAfter, quickNote } from '../web/js/logic.js';
+import { lastTypeAfter, quickNote, helpOpen, pushReadiness } from '../web/js/logic.js';
 import { expiryState, suppliesStatus, shelterLinks } from '../web/js/logic.js';
 
 const T0 = new Date('2026-10-27T09:00:00+09:00');
@@ -125,6 +125,17 @@ test('빠른 상태는 메모 앞에 붙고 300자를 넘지 않는다', () => {
   assert.equal(quickNote('갇힘', '', ' 3층 '), '갇힘 · 3층');
   assert.equal(quickNote('', '', ''), '');
   assert.equal(quickNote('다침', '집', 'x'.repeat(400)).length, 300);
+});
+
+test('알림 준비 상태와 열린 도움 요청', () => {
+  const ua = 'Android FamilyEmergencyApp/1.3';
+  assert.equal(pushReadiness([], at(0)).state, 'off');
+  assert.deepEqual(pushReadiness([{ at: at(-1), platform: ua }], at(0)), { state: 'ok', lastAt: at(-1), devices: ['안드로이드 앱'] });
+  assert.equal(pushReadiness([{ at: at(-24 * 15), platform: ua }], at(0)).state, 'old');
+  assert.equal(helpOpen({ last: { type: 'help', clientAt: at(-1) } }, null, at(0)), true);
+  assert.equal(helpOpen({ last: { type: 'help', clientAt: at(-30) } }, null, at(0)), false);
+  assert.equal(helpOpen({ last: { type: 'safe', clientAt: at(0) } }, null, at(0)), false);
+  assert.equal(helpOpen({}, null, at(0)), false);
 });
 
 test('나이 계산', () => {

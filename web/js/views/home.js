@@ -1,7 +1,7 @@
 // 홈: 현재 상황 → "나 무사해요" → 긴급 전화 → (비상 중) 지금 할 일 → (관리자) 빠른 선언 → 바로가기 → 가족·준비·재난문자·위치
 import { h, toast, busy, panel, foldPanel, alertBox, isIOS, choose } from '../dom.js';
 import { errorMessage } from '../firebase.js';
-import { checkIn, notifyHelp, setHelpPending, batteryLevel } from '../store.js';
+import { checkIn, notifyHelp, setHelpPending, clearHelpResponses, batteryLevel } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
 import {
   checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, helpSmsBody, smsHref,
@@ -9,7 +9,7 @@ import {
   suppliesStatus, toDate, shelterLinks, quickNote,
 } from '../logic.js';
 import { t } from '../i18n.js';
-import { familyStatusList, statusSummary } from './family.js';
+import { familyStatusList, statusSummary, helpCards } from './family.js';
 import { locationPanel } from './location.js';
 import { quickDeclarePanel } from './emergency.js';
 
@@ -26,6 +26,8 @@ async function report(state, type, note, knownPos) {
   // 위치는 저장을 기다리지 않고 함께 찾기 시작한다.
   const finding = knownPos ? null : getBestPosition().then((pos) => ({ pos }), (err) => ({ error: err.message }));
   const battery = await batteryLevel();
+  // 새로 요청하거나 안전해지면 지난 응답("제가 갑니다")을 지운다.
+  if (type !== 'checkpoint') clearHelpResponses(state.helpResponses[state.me.id] || []);
   // 알림을 보내기 전에 앱을 닫아도 다음에 열 때 이어서 보낸다.
   if (type === 'help') setHelpPending(state.me.id);
   else if (type === 'safe') setHelpPending(null);
@@ -262,6 +264,7 @@ export function homeView({ state, live, onChange }) {
     h('div', { class: 'home-hello' },
       h('h1', null, t('{name}님', { name: state.me.name })),
       live(() => situation(state))),
+    live(() => helpCards(state)),
 
     h('section', { class: 'card', 'aria-label': t('생존 신고') },
       safeBtn,

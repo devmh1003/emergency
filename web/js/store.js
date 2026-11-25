@@ -200,6 +200,46 @@ export async function retryHelp(me) {
   }
 }
 
+// ---------- 도움 요청 응답 ----------
+
+export const watchHelpResponses = (uid, cb, onError) => watchCollection('helpResponses', cb, onError, where('uid', '==', uid));
+
+/** "제가 갑니다": 응답을 남기고 요청한 사람에게 알린다. 알림이 실패해도 응답은 남는다. */
+export async function respondHelp(me, uid) {
+  const r = await commitWithTimeout(setDoc(ref('helpResponses', `${uid}_${me.id}`), {
+    uid, by: me.id, byName: me.name, at: serverTimestamp(),
+  }));
+  if (r === 'sent') callWorker('/help/respond', { uid }).catch(() => {});
+  return r;
+}
+
+export function cancelHelpResponse(me, uid) {
+  return commitWithTimeout(deleteDoc(ref('helpResponses', `${uid}_${me.id}`)));
+}
+
+/** 요청이 풀리거나 새로 요청하면 지난 응답을 지운다. */
+export function clearHelpResponses(list) {
+  return Promise.all(list.map((d) => deleteDoc(ref('helpResponses', d.id)).catch(() => {})));
+}
+
+/** 관리자: 구조 완료. 요청한 사람의 상태를 무사로 바꾼다 (위치는 그대로). */
+export function resolveHelp(me, member, responses) {
+  const { lat = null, lng = null, accuracy = null, battery = null } = member.last;
+  const batch = writeBatch(db);
+  batch.update(ref('members', member.id), {
+    last: { type: 'safe', lat, lng, accuracy, battery, note: `구조 완료 (${me.name})`, at: serverTimestamp(), clientAt: Timestamp.fromDate(clockNow()) },
+    updatedAt: serverTimestamp(),
+  });
+  for (const d of responses) batch.delete(ref('helpResponses', d.id));
+  addAudit(batch, 'help.resolve', { target: member.id, targetName: member.name, detail: '구조 완료' });
+  return commitWithTimeout(batch.commit());
+}
+
+/** 관리자: 가족 모두의 알림 등록 상태. 토큰은 빼고 알림 서버가 준다. @returns {Promise<{uid, platform, at}[]>} */
+export async function listPushDevices() {
+  return (await callWorker('/admin/readiness')).devices.map((d) => ({ ...d, at: d.at ? new Date(d.at) : null }));
+}
+
 // ---------- 비상선언 ----------
 
 /** level: 'alert'(2급) | 'real'(1급) */

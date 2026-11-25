@@ -601,3 +601,24 @@ test('프로토콜 핵심 요약은 6개까지', async () => {
   await assertSucceeds(setDoc(doc(as('admin'), 'protocols/heat'), p));
   await assertFails(setDoc(doc(as('admin'), 'protocols/heat'), { ...p, keyPoints: ['1', '2', '3', '4', '5', '6', '7'] }));
 });
+
+test('도움 요청 응답은 볼 수 있는 가족이, 도움 요청이 열려 있을 때만 남긴다', async () => {
+  const resp = (uid, by, byName, extra = {}) => ({ uid, by, byName, at: serverTimestamp(), ...extra });
+  const help = { type: 'help', lat: null, lng: null, accuracy: null, note: '', at: Timestamp.now(), clientAt: Timestamp.now() };
+  await assertFails(setDoc(doc(as('mom'), 'helpResponses/kid_mom'), resp('kid', 'mom', '엄마')));
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'members/kid'), { last: help }));
+  await assertSucceeds(setDoc(doc(as('mom'), 'helpResponses/kid_mom'), resp('kid', 'mom', '엄마')));
+  await assertFails(setDoc(doc(as('admin'), 'helpResponses/kid_admin'), resp('kid', 'admin', '엄마')));
+  await assertFails(setDoc(doc(as('admin'), 'helpResponses/kid_admin'), resp('kid', 'admin', '아빠', { notifiedKey: 'x' })));
+  await assertFails(setDoc(doc(as('admin'), 'helpResponses/kid_mom2'), resp('kid', 'admin', '아빠')));
+  await assertSucceeds(setDoc(doc(as('admin'), 'helpResponses/kid_admin'), resp('kid', 'admin', '아빠')));
+  await assertFails(setDoc(doc(as('kid'), 'helpResponses/kid_kid'), resp('kid', 'kid', '아이')));
+  // 지정되지 않은 가족은 남기지도 보지도 못한다
+  await env.withSecurityRulesDisabled((c) => updateDoc(doc(c.firestore(), 'members/mom'), { last: help, links: [] }));
+  await assertFails(setDoc(doc(as('kid'), 'helpResponses/mom_kid'), resp('mom', 'kid', '아이')));
+  await env.withSecurityRulesDisabled((c) => setDoc(doc(c.firestore(), 'helpResponses/admin_x'), resp('admin', 'x', 'x')));
+  await assertFails(getDocs(query(collection(as('mom'), 'helpResponses'), where('uid', '==', 'admin'))));
+  await assertSucceeds(getDocs(query(collection(as('kid'), 'helpResponses'), where('uid', '==', 'kid'))));
+  await assertFails(getDocs(query(collection(anon(), 'helpResponses'), where('uid', '==', 'kid'))));
+  await assertSucceeds(deleteDoc(doc(as('kid'), 'helpResponses/kid_mom')));
+});
