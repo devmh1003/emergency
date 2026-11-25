@@ -132,6 +132,8 @@
 
 [firestore.rules](firestore.rules)가 바뀐 버전을 올릴 때는 **사이트를 올리기 전에 규칙부터 Firebase 콘솔에 다시 게시**하세요. 화면이 새 규칙을 전제로 동작하기 때문에, 순서가 바뀌면 일부 저장이 거부됩니다.
 
+장애가 나면 [docs/recovery.md](docs/recovery.md)를 보세요. 상태 점검: `node tools/health-check.mjs`
+
 ## 비상 시 안정성
 
 - 화면은 GitHub(전 세계 CDN), 데이터는 Google, 알림은 Cloudflare로 나뉘어 있습니다.
