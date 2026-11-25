@@ -101,6 +101,35 @@ export function ask(message, { ok = t('예'), cancel = t('아니요'), danger = 
   });
 }
 
+/**
+ * 화면 정중앙에 고르는 창을 띄운다. options: [{ value, label, cls }]. 고른 value, 취소·바깥 누름·Esc 면 null.
+ */
+export function choose(message, options) {
+  return new Promise((resolve) => {
+    const before = document.activeElement;
+    const done = (answer) => {
+      dialog.remove();
+      document.removeEventListener('keydown', onKey);
+      before?.focus?.();
+      resolve(answer);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') done(null); };
+    const dialog = h('div', {
+      class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-message',
+      onClick: (e) => { if (e.target === dialog) done(null); },
+    },
+    h('div', { class: 'modal-box' },
+      h('p', { id: 'modal-message', class: 'modal-message' }, message),
+      h('div', { class: 'choose-grid' }, options.map((o) => h('button', {
+        type: 'button', class: `btn btn-lg ${o.cls || ''}`, onClick: () => done(o.value),
+      }, o.label))),
+      h('button', { type: 'button', class: 'btn btn-unstyled', onClick: () => done(null) }, t('취소'))));
+    document.body.append(dialog);
+    document.addEventListener('keydown', onKey);
+    dialog.querySelector('button').focus();
+  });
+}
+
 /** 폼 입력 한 줄 (라벨 + 입력) */
 export function field(label, input, hint) {
   return h('label', { class: 'field' },
