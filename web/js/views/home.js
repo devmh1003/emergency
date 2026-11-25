@@ -1,7 +1,7 @@
 // 홈: 현재 상황 → "나 무사해요" → 긴급 전화 → (비상 중) 지금 할 일 → (관리자) 빠른 선언 → 바로가기 → 가족·준비·재난문자·위치
 import { h, toast, busy, panel, foldPanel, alertBox, isIOS, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
-import { checkIn, notifyHelp, batteryLevel } from '../store.js';
+import { checkIn, notifyHelp, setHelpPending, batteryLevel } from '../store.js';
 import { getBestPosition, lastKnownPosition } from '../geo.js';
 import {
   checkinLabel, formatAgo, formatDateTime, formatRemaining, memberStatus, safetySmsBody, helpSmsBody, smsHref,
@@ -26,6 +26,9 @@ async function report(state, type, note, knownPos) {
   // 위치는 저장을 기다리지 않고 함께 찾기 시작한다.
   const finding = knownPos ? null : getBestPosition().then((pos) => ({ pos }), (err) => ({ error: err.message }));
   const battery = await batteryLevel();
+  // 알림을 보내기 전에 앱을 닫아도 다음에 열 때 이어서 보낸다.
+  if (type === 'help') setHelpPending(state.me.id);
+  else if (type === 'safe') setHelpPending(null);
   const result = await checkIn(state.me, type, knownPos || null, note, state.emergency, battery);
   if (result === 'queued') toast(t('{what} 저장됨 — 오프라인이라 연결되면 자동으로 전송됩니다.', { what }), 'warn');
   else toast(knownPos ? t('{what} 전송 완료', { what }) : t('{what} 전송 완료. 위치를 찾아 덧붙이는 중…', { what }));

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
 import { fromDocument, toFields } from '../src/firestore.js';
 import worker, {
+  retryEmergencyPush,
   notificationKey, notificationContent, pickTokens, pushMessage, alarmAck, checkDisasterMessages, helpRecipients, helpContent,
 } from '../src/index.js';
 import { countAttempt, lockedUntil, maskIp } from '../src/login.js';
@@ -199,8 +200,9 @@ test('비상 알림은 활성 가족의 기기에만, 한 번만 보낸다', asy
   const fcm = calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/'));
   assert.equal(fcm.length, 1);
   assert.equal(JSON.parse(fcm[0].body).message.token, 'tok-a');
-  const patch = calls.find((c) => c.method === 'PATCH');
-  assert.match(patch.url, /currentDocument.updateTime=/);
+  const claim = JSON.parse(calls.find((c) => c.url.endsWith('/documents:commit')).body).writes[0];
+  assert.equal(claim.update.fields.notifiedKey.stringValue, 'real:T1');
+  assert.ok(claim.currentDocument.updateTime);
   // 관리자 기록에 발송 결과가 남는다
   const log = calls.find((c) => c.method === 'POST' && c.url.endsWith('/documents/auditLog'));
   const fields = JSON.parse(log.body).fields;
@@ -450,7 +452,8 @@ function disasterFetch({ emergency = null, settings = null, feed = null, recent 
   };
 }
 
-const commits = () => calls.filter((c) => c.url.endsWith('/documents:commit')).map((c) => JSON.parse(c.body).writes);
+const commits = () => calls.filter((c) => c.url.endsWith('/documents:commit')).map((c) => JSON.parse(c.body).writes)
+  .filter((w) => !w.every((x) => x.update?.name.includes('/notifyState/')));
 const fcmCalls = () => calls.filter((c) => c.url.startsWith('https://fcm.googleapis.com/'));
 const denv = { ...env, SAFETY_DATA_KEY: 'test-key' };
 
@@ -574,7 +577,7 @@ test('확인할 차례가 아니면 재난문자를 부르지 않고, 확인하�
 // ---------- 접속 코드 확인과 잠금 ----------
 
 /** 메모리 Firestore + Firebase 인증(관리자 API, 비밀번호 로그인) 흉내 */
-function memoryFetch(store, { passwords = {}, accounts = {}, authDown = false } = {}) {
+function memoryFetch(store, { passwords = {}, accounts = {}, authDown = false, fcm = () => new Response('{"name":"sent"}') } = {}) {
   let tick = 0;
   const stamp = () => `2026-10-29T00:00:${String(++tick).padStart(2, '0')}Z`;
   const doc = (path) => ({ name: `projects/${PROJECT}/databases/(default)/documents/${path}`, updateTime: store[path].updateTime, fields: toFields(store[path].data) });
@@ -584,7 +587,8 @@ function memoryFetch(store, { passwords = {}, accounts = {}, authDown = false } 
     const ok = (data) => new Response(JSON.stringify(data), { status: 200 });
     const body = init.body ? JSON.parse(init.body) : {};
     if (url === 'https://oauth2.googleapis.com/token') return ok({ access_token: 'at', expires_in: 3600 });
-    if (url.startsWith('https://fcm.googleapis.com/')) return ok({ name: 'sent' });
+    if (url.startsWith('https://fcm.googleapis.com/')) return fcm(body.message.token);
+    if (url.includes('securetoken@system.gserviceaccount.com')) return ok({ keys: [jwk] });
     if (url.endsWith('/accounts:lookup')) return ok({ users: body.localId.filter((id) => accounts[id]).map((id) => ({ localId: id, email: accounts[id] })) });
     if (url.endsWith('/accounts:delete')) {
       delete accounts[body.localId];
@@ -878,4 +882,88 @@ test('새 문자가 없어도 확인 시각을 남기고, 처음이면 빈 목�
   assert.equal(writes.length, 2);
   assert.deepEqual(writes[1].updateMask.fieldPaths.sort(), ['checkedAt', 'regions']);
   assert.equal('items' in writes[1].update.fields, false);
+});
+
+// ---------- 못 보낸 비상 알림 다시 보내기 ----------
+
+function emergencyStore(declaredAt) {
+  return {
+    ...gateStore(),
+    'members/dad': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u1' },
+    'members/mom': { data: { name: '엄마', active: true, role: 'member', gen: 5 }, updateTime: 'u2' },
+    'pushTokens/dad_0': { data: { uid: 'dad', token: 'tok-dad', at: 'a' }, updateTime: 'u3' },
+    'pushTokens/mom_0': { data: { uid: 'mom', token: 'tok-mom', at: 'a' }, updateTime: 'u4' },
+    'emergency/current': { data: { active: true, level: 'real', type: 'fire', declaredAt, realAt: declaredAt, declaredByName: '아빠' }, updateTime: 'u5' },
+  };
+}
+const sentTo = () => fcmCalls().map((c) => JSON.parse(c.body).message.token).sort();
+
+test('앱이 발송을 요청하지 못한 비상도 1분마다 깨어날 때 한 번 보낸다', async () => {
+  const now = Date.now();
+  const store = emergencyStore(new Date(now - 60e3).toISOString());
+  memoryFetch(store);
+  assert.equal((await retryEmergencyPush(env, now)).sent, 2);
+  calls = [];
+  assert.equal((await retryEmergencyPush(env, now + 60e3)).sent, 0);
+  assert.equal(fcmCalls().length, 0);
+  // 해제도 마찬가지
+  store['emergency/current'].data = { ...store['emergency/current'].data, active: false, endedAt: new Date(now + 70e3).toISOString() };
+  assert.equal((await retryEmergencyPush(env, now + 120e3)).sent, 2);
+});
+
+test('실패한 기기에만 다시 보내고, 성공하면 멈춘다', async () => {
+  const now = Date.now();
+  const store = emergencyStore(new Date(now - 60e3).toISOString());
+  let down = true;
+  memoryFetch(store, { fcm: (tok) => (down && tok === 'tok-mom' ? new Response('{}', { status: 503 }) : new Response('{"name":"x"}')) });
+  const r = await lpost('/notify', await makeToken({ sub: 'dad' }));
+  assert.deepEqual([r.data.sent, r.data.failed], [1, 1]);
+  assert.equal('retry' in r.data, false);
+  calls = [];
+  down = false;
+  assert.equal((await retryEmergencyPush(env, Date.now() + 60e3)).sent, 1);
+  assert.deepEqual(sentTo(), ['tok-mom']);
+  calls = [];
+  await retryEmergencyPush(env, Date.now() + 120e3);
+  assert.equal(fcmCalls().length, 0);
+});
+
+test('발송 중에 끊기면 잠시 뒤 모두에게 다시 보낸다', async () => {
+  const now = Date.now();
+  const at = new Date(now - 60e3).toISOString();
+  const store = emergencyStore(at);
+  store['emergency/current'].data.notifiedKey = `real:${at}`;
+  store['notifyState/current'] = { data: { key: `real:${at}`, attempts: 1, pending: null, done: false, leaseUntil: new Date(now + 30e3).toISOString() }, updateTime: 'n1' };
+  memoryFetch(store);
+  assert.equal((await retryEmergencyPush(env, now)).sent, 0);
+  assert.equal((await retryEmergencyPush(env, now + 60e3)).sent, 2);
+});
+
+test('오래된 비상, 예전 방식으로 이미 보낸 비상은 뒤늦게 다시 보내지 않는다', async () => {
+  const now = Date.now();
+  memoryFetch(emergencyStore(new Date(now - 2 * 3600e3).toISOString()));
+  assert.equal((await retryEmergencyPush(env, now)).sent, 0);
+  const at = new Date(now - 60e3).toISOString();
+  const store = emergencyStore(at);
+  store['emergency/current'].data.notifiedKey = `real:${at}`;
+  memoryFetch(store);
+  assert.equal((await retryEmergencyPush(env, now)).sent, 0);
+});
+
+test('도움 요청을 한 대에도 못 보냈으면 다시 요청할 때 보낸다', async () => {
+  const at = new Date().toISOString();
+  const store = {
+    ...gateStore(),
+    'members/kid': { data: { name: '아이', active: true, role: 'member', gen: 5, links: [], last: { type: 'help', at } }, updateTime: 'u1' },
+    'members/dad': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u2' },
+    'pushTokens/dad_0': { data: { uid: 'dad', token: 'tok-dad', at }, updateTime: 'u4' },
+  };
+  let down = true;
+  memoryFetch(store, { fcm: () => new Response('{"name":"x"}', { status: down ? 503 : 200 }) });
+  const token = await makeToken({ sub: 'kid' });
+  assert.equal((await lpost('/help', token)).data.sent, 0);
+  assert.ok(calls.some((c) => c.method === 'DELETE' && c.url.includes('helpAlerts/kid')));
+  delete store['helpAlerts/kid']; // 흉내 서버는 DELETE 를 처리하지 않는다
+  down = false;
+  assert.equal((await lpost('/help', token)).data.sent, 1);
 });

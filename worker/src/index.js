@@ -9,6 +9,7 @@
 //   POST /admin/rekey  관리자·백업 코드: 코드가 새어 나갔을 때 그 코드로 들어오는 사람들의 로그인 열쇠를 모두 바꿈
 //   POST /admin/user   관리자: 가족 로그인 계정 삭제 · 비밀번호 초기화
 //   POST /me/delete    본인 계정 삭제 (가족 정보·신고 기록·로그인 계정)
+//   (1분마다 깨어남)   못 보낸 비상 알림 다시 보내기
 //   (1분마다 깨어남)   정부 긴급재난문자 확인(하루 1,000번 한도 안에서 1~2분마다) → 전쟁·지진 같은 위급 문자면 1급 비상 자동 선언 (disaster.js)
 //
 // 환경 변수 (wrangler.toml / 비밀 변수):
@@ -213,11 +214,14 @@ export function pickTokens(tokens) {
   return [...byUid.values()].flat();
 }
 
-async function sendToTokens(env, fs, accessToken, tokens, content) {
+/** retry: 잠시 뒤 다시 보내면 될 수 있는 기기의 토큰 문서 id 를 담을 배열 (지워진 기기는 담지 않는다) */
+async function sendToTokens(env, fs, accessToken, tokens, content, { retry = [], limit = Infinity } = {}) {
   let sent = 0;
   let failed = 0;
   let deletes = 0;
-  const queue = pickTokens(tokens);
+  const picked = pickTokens(tokens);
+  const queue = picked.slice(0, limit);
+  for (const t of picked.slice(limit)) retry.push(t.id);
   const worker = async () => {
     while (queue.length) {
       const t = queue.shift();
@@ -226,6 +230,7 @@ async function sendToTokens(env, fs, accessToken, tokens, content) {
         if (r.ok) sent++;
         else {
           failed++;
+          if (!r.stale) retry.push(t.id);
           if (r.stale && deletes < MAX_STALE_DELETES) {
             deletes++;
             await fs.delete(`pushTokens/${encodeURIComponent(t.id)}`).catch(() => {});
@@ -234,6 +239,7 @@ async function sendToTokens(env, fs, accessToken, tokens, content) {
       } catch {
         // 한 기기에서 실패해도 나머지 기기에는 계속 보낸다.
         failed++;
+        retry.push(t.id);
       }
     }
   };
@@ -300,22 +306,70 @@ async function logNotify(fs, caller, action, result, extra = '') {
   }
 }
 
-async function handleNotify(env, fs, accessToken, caller) {
-  const emergency = await fs.get('emergency/current');
+// 비상 알림을 어디까지 보냈는지. 못 보낸 기기는 1분마다 깨어날 때 다시 보낸다 (알림 서버만 읽고 쓴다).
+//   key: 어느 비상(단계)의 알림인지, leaseUntil: 이때까지는 다른 실행이 손대지 않는다, pending: 남은 토큰 문서 id (null 이면 전부)
+const DELIVERY_PATH = 'notifyState/current';
+const DELIVERY_LEASE_MS = 2 * 60e3;
+const DELIVERY_MAX_ATTEMPTS = 30;
+// 이보다 오래된 비상·해제는 뒤늦게 알리지 않는다.
+const DELIVERY_MAX_AGE_MS = 60 * 60e3;
+// 1분마다 깨어날 때는 재난문자 확인과 외부 호출 50번을 나눠 쓰므로 한 번에 이만큼만 보낸다.
+const DELIVERY_CRON_LIMIT = 25;
+
+const leaseWrite = (key, attempts, pending, now) => ({
+  path: DELIVERY_PATH, data: { key, attempts, pending, done: false, leaseUntil: new Date(now + DELIVERY_LEASE_MS) },
+});
+
+/** 발송을 마치고 남은 기기를 적는다. 적지 못하면 leaseUntil 이 지난 뒤 다시 보낸다 (안 가는 것보다 두 번 가는 게 낫다). */
+async function finishDelivery(fs, key, attempts, pending, now) {
+  await fs.commit([{ path: DELIVERY_PATH, data: { key, attempts, pending, done: !pending.length, leaseUntil: new Date(now) } }]).catch(() => {});
+}
+
+/**
+ * 지금 비상 상태의 알림을 보낸다. 처음이면 모두에게, 앞선 발송이 실패했거나 중간에 끊겼으면 남은 기기에만.
+ * maxAge: 이보다 오래된 상태는 보내지 않는다 (앱이 열려 있지 않아도 1분마다 부르므로).
+ */
+async function deliverEmergency(env, fs, caller, { now = Date.now(), limit = Infinity, maxAge = Infinity } = {}) {
+  const [emergency, state, gates] = await fs.batchGet(['emergency/current', DELIVERY_PATH, 'public/gates']);
   const key = notificationKey(emergency);
   if (!key) return { sent: 0, skipped: '보낼 비상 상태가 없습니다' };
-  if (emergency.notifiedKey === key) return { sent: 0, skipped: '이미 알림을 보냈습니다' };
-  // 먼저 "보냄" 표시를 남긴다. 동시에 여러 요청이 와도 문서가 그 사이 바뀌면 실패하므로 한 번만 보낸다.
-  const claimed = await fs.setString('emergency/current', 'notifiedKey', key, emergency.updateTime);
+  if (maxAge !== Infinity && !(now - Date.parse(key.slice(key.indexOf(':') + 1)) < maxAge)) return { sent: 0, skipped: '오래된 상태입니다' };
+  const first = emergency.notifiedKey !== key;
+  if (!first) {
+    if (state?.key !== key || state.done) return { sent: 0, skipped: '이미 알림을 보냈습니다' };
+    if (Date.parse(state.leaseUntil) > now) return { sent: 0, skipped: '다른 요청이 이미 보내는 중입니다' };
+    if (state.attempts >= DELIVERY_MAX_ATTEMPTS) return { sent: 0, skipped: '여러 번 실패해 그만 보냅니다' };
+  }
+  const attempts = first ? 1 : state.attempts + 1;
+  const only = first ? null : state.pending;
+  // 먼저 맡았다는 표시를 남긴다. 동시에 여러 요청이 와도 문서가 그 사이 바뀌면 실패하므로 한 곳만 보낸다.
+  const claimed = await fs.commit(first
+    ? [{ path: 'emergency/current', data: { notifiedKey: key }, mask: ['notifiedKey'], updateTime: emergency.updateTime }, leaseWrite(key, 1, null, now)]
+    : [{ ...leaseWrite(key, attempts, only, now), updateTime: state.updateTime }]);
   if (!claimed) return { sent: 0, skipped: '다른 요청이 이미 보내는 중입니다' };
   // 삭제·비활성화된 가족, 예전 방식 계정의 기기에는 보내지 않는다.
-  const active = new Set((await familyMembers(fs, caller.gates)).map((m) => m.id));
-  const tokens = await tokensFor(fs, active);
-  const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(emergency));
+  const active = new Set((await familyMembers(fs, gates)).map((m) => m.id));
+  const all = await tokensFor(fs, active);
+  const tokens = only ? all.filter((t) => only.includes(t.id)) : all;
+  const retry = [];
+  const result = await sendToTokens(env, fs, await fs.getToken(), tokens, notificationContent(emergency), { retry, limit });
+  await finishDelivery(fs, key, attempts, retry, now);
   const what = emergency.active ? (emergencyLevel(emergency) === 'alert' ? '2급' : '1급') : '';
   await logNotify(fs, caller, emergency.active ? 'notify.emergency' : 'notify.end', result,
-    `${what ? `${what} · ` : ''}기기 ${tokens.length}대 대상`);
+    `${what ? `${what} · ` : ''}${attempts > 1 ? `${attempts}번째 발송 · ` : ''}기기 ${tokens.length}대 대상`);
   return result;
+}
+
+async function handleNotify(env, fs, caller) {
+  return deliverEmergency(env, fs, caller);
+}
+
+/** 1분마다: 앱이 요청하지 못한 알림(오프라인 선언 뒤 앱을 닫은 경우 등)과 실패한 알림을 보낸다. */
+export async function retryEmergencyPush(env, now = Date.now()) {
+  if (!env.GOOGLE_SERVICE_ACCOUNT || !env.FIREBASE_PROJECT_ID) return { skipped: '설정 없음' };
+  const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT);
+  const fs = new Firestore(env.FIREBASE_PROJECT_ID, () => getAccessToken(sa));
+  return deliverEmergency(env, fs, SYSTEM_CALLER, { now, limit: DELIVERY_CRON_LIMIT, maxAge: DELIVERY_MAX_AGE_MS });
 }
 
 /** 가족 전체 테스트 알람. 테스트 문서마다 한 번만 보낸다. */
@@ -403,13 +457,16 @@ export async function autoDeclare(env, fs, emergency, hit, now, gates = null) {
       data: { action: active ? 'escalate' : 'declare', level: hit.level, type: hit.type, message, by: SYSTEM_ID, byName: SYSTEM_NAME, at },
       exists: false,
     },
+    leaseWrite(key, 1, null, now),
   ]);
   if (!ok) return { action: 'retry' };
 
   const accessToken = await fs.getToken();
   const members = new Set((await familyMembers(fs, gates)).map((m) => m.id));
   const tokens = await tokensFor(fs, members);
-  const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(after));
+  const retry = [];
+  const result = await sendToTokens(env, fs, accessToken, tokens, notificationContent(after), { retry });
+  await finishDelivery(fs, key, 1, retry, now);
   await logNotify(fs, SYSTEM_CALLER, 'notify.emergency', result,
     `${hit.level === 'alert' ? '2급' : '1급'} · 재난문자 자동 · 기기 ${tokens.length}대 대상`);
   return { action: active ? 'escalate' : 'declare', ...result };
@@ -645,7 +702,10 @@ async function handleHelp(env, fs, accessToken, caller) {
   if (!claimed) return { sent: 0, skipped: '다른 요청이 이미 보내는 중입니다', recipients };
 
   const tokens = await tokensFor(fs, new Set(targets.map((m) => m.id)));
-  const result = await sendToTokens(env, fs, accessToken, tokens, helpContent(me));
+  const retry = [];
+  const result = await sendToTokens(env, fs, accessToken, tokens, helpContent(me), { retry });
+  // 한 대에도 못 보냈으면 "보냄" 표시를 지워, 앱이 다시 요청할 때 보낸다.
+  if (!result.sent && retry.length) await fs.delete(`helpAlerts/${caller.uid}`).catch(() => {});
   await logNotify(fs, caller, 'notify.help', result, `${targets.length}명 · 기기 ${tokens.length}대 대상`);
   return { ...result, recipients };
 }
@@ -730,8 +790,11 @@ async function handleAdminUser(env, fs, accessToken, caller, body) {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(checkDisasterMessages(env, event.scheduledTime || Date.now())
-      .catch((err) => console.error('재난문자 확인 실패', err)));
+    const now = event.scheduledTime || Date.now();
+    ctx.waitUntil((async () => {
+      await retryEmergencyPush(env, Date.now()).catch((err) => console.error('알림 다시 보내기 실패', err));
+      await checkDisasterMessages(env, now).catch((err) => console.error('재난문자 확인 실패', err));
+    })());
   },
 
   async fetch(request, env) {
@@ -742,7 +805,7 @@ export default {
       return new Response(null, { status: origin ? 204 : 403, headers: corsHeaders(origin) });
     }
     if (request.method === 'GET' && url.pathname === '/') {
-      return json({ ok: true, service: 'family-emergency-worker' }, 200, origin);
+      return json({ ok: true, service: 'family-emergency-worker', now: Date.now() }, 200, origin);
     }
     if (request.method !== 'POST') return json({ error: '지원하지 않는 요청입니다' }, 405, origin);
     if (!origin) return json({ error: '허용되지 않은 출처입니다' }, 403, null);
@@ -761,7 +824,7 @@ export default {
       const accessToken = await getToken();
 
       let result;
-      if (url.pathname === '/notify') result = await handleNotify(env, fs, accessToken, caller);
+      if (url.pathname === '/notify') result = await handleNotify(env, fs, caller);
       else if (url.pathname === '/help') result = await handleHelp(env, fs, accessToken, caller);
       else if (url.pathname === '/test-push') result = await handleTestPush(env, fs, accessToken, caller);
       else if (url.pathname === '/drill') result = await handleDrill(env, fs, accessToken, caller, body);

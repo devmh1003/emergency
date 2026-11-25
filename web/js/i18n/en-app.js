@@ -232,6 +232,7 @@ export const EN = {
   '{type} 때 해야 할 행동': 'What to do: {type}',
   '비상 배낭·물·현금을 확인하세요. 1급 비상이 되면 경보음이 울립니다.': 'Check your go-bag, water and cash. The siren sounds at Level 1.',
   '{what} 전송 완료. 위치를 찾아 덧붙이는 중…': '{what} check-in sent. Finding your location to add…',
+  '보관했던 내용을 서버가 저장하지 않았습니다. 다시 시도하고, 급하면 전화나 문자로 알리세요.': 'The server did not save what was queued. Try again, and call or text if it is urgent.',
   '보내는 중…': 'Sending…',
   '함께 보낼 메모: {text}': 'Note to send: {text}',
   '메모 덧붙이기 (선택)': 'Add a note (optional)',

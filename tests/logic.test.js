@@ -114,6 +114,13 @@ test('도움 요청 뒤의 체크포인트는 도움 요청을 지우지 않는�
   assert.equal(lastTypeAfter(help(1), 'checkpoint', null, at(30)), 'checkpoint');
 });
 
+test('지난 비상 때 직접 정한 도착 시각은 이번 비상에 쓰지 않는다', () => {
+  const e = { active: true, level: 'real', declaredAt: at(0), realAt: at(0) };
+  const p = (overrideAt) => meetingSchedule([{ rank: 1, offsetHours: 1, waitMinutes: 60, overrideAt }], e, at(0.5)).points[0].at.getTime();
+  assert.equal(p(at(-700)), at(1).getTime());
+  assert.equal(p(at(3)), at(3).getTime());
+});
+
 test('나이 계산', () => {
   const now = new Date('2026-10-27T12:00:00');
   assert.equal(ageFromBirth('1990-10-27', now), 36);

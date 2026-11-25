@@ -1,0 +1,21 @@
+name: 서비스 상태 점검
+
+# 매시간 실제 사이트·알림 서버·데이터베이스를 읽기만 해서 점검한다. 실패하면 GitHub 가 저장소 주인에게 메일을 보낸다(알림 설정에 따름).
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: node tools/health-check.mjs
