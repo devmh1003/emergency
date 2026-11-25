@@ -498,6 +498,20 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 정기 훈련: 매월 정한 날·시각(한국 시간)에 알림 서버가 테스트 알람을 보낸다.
+    match /config/drill {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['enabled', 'day', 'hour', 'updatedBy', 'updatedByName', 'updatedAt'])
+        && request.resource.data.enabled is bool
+        && request.resource.data.day is int && request.resource.data.day >= 1 && request.resource.data.day <= 28
+        && request.resource.data.hour is int && request.resource.data.hour >= 0 && request.resource.data.hour <= 23
+        && request.resource.data.updatedBy == request.auth.uid
+        && str(request.resource.data.updatedByName, 40)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
     match /config/disasterFeed {
       allow read: if isAdmin();
       allow write: if false;

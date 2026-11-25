@@ -4,7 +4,7 @@ import { h, field, select, formData, toast, savedToast, busy, panel, foldPanel, 
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
-  watchLoginLocks, clearLoginLock, listPushDevices,
+  watchLoginLocks, clearLoginLock, watchDrillSettings, saveDrillSettings, listDrills, listPushDevices,
 } from '../store.js';
 import { emergencyLogTitle, formatDateTime, toDate, pushReadiness } from '../logic.js';
 import { t } from '../i18n.js';
@@ -230,6 +230,50 @@ function readinessPanel(state, onChange) {
   return panelEl;
 }
 
+/** 정기 훈련: 매월 정한 때 소리 없는 테스트 알람, 최근 응답률 */
+function drillPanel(state, unsubs) {
+  const enabled = h('input', { type: 'checkbox', name: 'enabled' });
+  const day = select('day', Array.from({ length: 28 }, (_, i) => ({ value: String(i + 1), label: t('{n}일', { n: i + 1 }) })), '1');
+  const hour = select('hour', Array.from({ length: 24 }, (_, i) => ({ value: String(i), label: t('{n}시', { n: i }) })), '20');
+  const saved = h('p', { class: 'muted small' });
+  const form = h('form', { class: 'stack' },
+    h('label', { class: 'check' }, enabled, h('span', null, h('strong', null, t('매월 훈련 알림 보내기')))),
+    h('div', { class: 'field-row' }, field(t('날짜'), day), field(t('시각 (한국 시간)'), hour)),
+    h('button', { class: 'btn', type: 'submit' }, t('저장')),
+    saved);
+  form.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    busy(form.querySelector('button[type=submit]'), async () => {
+      try {
+        savedToast(await saveDrillSettings(state.me, { enabled: enabled.checked, day: Number(day.value), hour: Number(hour.value) }), t('저장했습니다.'));
+      } catch (err) { toast(errorMessage(err), 'error'); }
+    });
+  });
+  unsubs.push(watchDrillSettings((d) => {
+    enabled.checked = d?.enabled === true;
+    if (d) { day.value = String(d.day); hour.value = String(d.hour); }
+    saved.textContent = d?.updatedAt ? t('{name} · {time} 저장', { name: d.updatedByName || '', time: formatDateTime(d.updatedAt) }) : '';
+  }, () => {}));
+  const results = h('div');
+  const el = foldPanel(t('📅 정기 훈련'), { hint: t('매월 알림이 잘 오는지 확인') },
+    h('p', { class: 'small muted' }, t('정한 때에 가족 모두에게 소리 없는 2급 테스트 알람을 보냅니다. 비상 중이면 보내지 않습니다.')),
+    form,
+    h('h3', { class: 'panel-subhead' }, t('최근 훈련 응답률')),
+    results);
+  const load = async () => {
+    try {
+      const list = await listDrills();
+      const people = state.members.filter((m) => m.active);
+      results.replaceChildren(list.length ? table([t('일시'), t('응답'), t('아직 확인 안 함')], list.map((x) => {
+        const done = people.filter((m) => x.acks.includes(m.id));
+        return [formatDateTime(x.at), `${done.length}/${people.length}`, people.filter((m) => !done.includes(m)).map((m) => m.name).join(', ') || '-'];
+      })) : empty(t('아직 한 훈련이 없습니다.')));
+    } catch (err) { results.replaceChildren(h('p', { class: 'muted small' }, errorMessage(err))); }
+  };
+  el.addEventListener('toggle', () => { if (el.open) load(); });
+  return el;
+}
+
 const SHORTCUTS = [
   ['#/admin/meet', '📍', '집합장소 설정', '1~10순위 장소와 시간'],
   ['#/admin/protocols', '📘', '대처법 관리', '내용·체크리스트 편집'],
@@ -283,6 +327,8 @@ export function adminHubView({ state, live, onChange }) {
     readinessPanel(state, onChange),
 
     tests,
+
+    drillPanel(state, unsubs),
 
     disasterPanel(state, unsubs),
 

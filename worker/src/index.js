@@ -11,7 +11,7 @@
 //   POST /admin/readiness 관리자: 가족별 알림 등록 상태 (토큰 제외)
 //   POST /admin/user   관리자: 가족 로그인 계정 삭제 · 비밀번호 초기화
 //   POST /me/delete    본인 계정 삭제 (가족 정보·신고 기록·로그인 계정)
-//   (1분마다 깨어남)   못 보낸 비상 알림 다시 보내기
+//   (1분마다 깨어남)   못 보낸 비상 알림 다시 보내기, 미신고 가족 다시 알리기, 정기 훈련
 //   (1분마다 깨어남)   정부 긴급재난문자 확인(하루 1,000번 한도 안에서 1~2분마다) → 전쟁·지진 같은 위급 문자면 1급 비상 자동 선언 (disaster.js)
 //
 // 환경 변수 (wrangler.toml / 비밀 변수):
@@ -372,6 +372,124 @@ export async function retryEmergencyPush(env, now = Date.now()) {
   const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT);
   const fs = new Firestore(env.FIREBASE_PROJECT_ID, () => getAccessToken(sa));
   return deliverEmergency(env, fs, SYSTEM_CALLER, { now, limit: DELIVERY_CRON_LIMIT, maxAge: DELIVERY_MAX_AGE_MS });
+}
+
+// ---------- 미신고 가족 다시 알리기, 정기 훈련 (1분마다) ----------
+
+const REMIND_PATH = 'notifyState/remind';
+const DRILL_PATH = 'notifyState/drill';
+// 비상이 시작(격상)된 뒤 이때마다 아직 신고하지 않은 사람에게 다시 알린다.
+const REMIND_STEPS_MS = [10 * 60e3, 30 * 60e3];
+// 이보다 늦으면(알림 서버가 쉬었거나 막 배포한 경우) 건너뛴다.
+const REMIND_LATE_MS = 20 * 60e3;
+// 재난문자 확인과 외부 호출 50번을 나눠 쓴다. 남은 기기는 다음 1분에 보낸다.
+const CRON_LIMIT = 20;
+export const DRILL_ID = 'drill';
+const DRILL_NAME = '정기 훈련';
+
+/** 이 비상에서 아직 신고하지 않은 사람인가 (사이트의 memberStatus 와 같은 기준) */
+export function isUnreported(member, emergency) {
+  const at = Date.parse(member.last?.clientAt || member.last?.at || '');
+  if (!(at >= Date.parse(emergency.declaredAt))) return true;
+  if (member.last.type === 'help') return false;
+  return emergencyLevel(emergency) === 'real' && at < Date.parse(emergency.realAt || emergency.declaredAt);
+}
+
+function remindContent(emergency) {
+  const c = notificationContent(emergency);
+  return { ...c, title: `${c.title} — 생존신고 확인`, body: '아직 생존신고가 없습니다. 앱을 열고 "나 무사해요" 또는 "도움 요청"을 눌러 주세요.' };
+}
+
+/**
+ * 상태 문서(path)를 맡고 tokens 에 나눠 보낸다. 남은 토큰 문서 id 는 pending 에 남긴다.
+ * @returns 발송 결과, 다른 실행이 맡았으면 null
+ */
+async function sendInBatches(env, fs, path, state, data, tokens, content) {
+  const now = tokens.slice(0, CRON_LIMIT);
+  const pending = tokens.slice(CRON_LIMIT).map((t) => t.id);
+  const claimed = await fs.commit([{ path, data: { ...data, pending }, ...(state ? { updateTime: state.updateTime } : { exists: false }) }]);
+  if (!claimed) return null;
+  return sendToTokens(env, fs, await fs.getToken(), now, content);
+}
+
+/** @returns 보낸 것이 있으면 true */
+export async function remindUnreported(env, fs, { emergency, state, gates, now }) {
+  if (!emergency?.active) return false;
+  const key = notificationKey(emergency);
+  const since = Date.parse(key.slice(key.indexOf(':') + 1));
+  const mine = state?.key === key ? state : null;
+  const queued = mine?.pending?.length ? mine.pending : null;
+  const step = queued ? mine.step - 1 : mine?.step || 0;
+  const age = now - since;
+  if (!queued) {
+    if (step >= REMIND_STEPS_MS.length || !(age >= REMIND_STEPS_MS[step])) return false;
+    if (age > REMIND_STEPS_MS[step] + REMIND_LATE_MS) {
+      await fs.commit([{ path: REMIND_PATH, data: { key, step: step + 1, pending: [] }, ...(state ? { updateTime: state.updateTime } : { exists: false }) }]);
+      return false;
+    }
+  }
+  const members = await familyMembers(fs, gates);
+  // 나눠 보내는 동안 신고한 사람은 뺀다.
+  const missing = members.filter((m) => isUnreported(m, emergency));
+  const admins = members.filter((m) => m.role === 'admin');
+  const all = await tokensFor(fs, new Set([...missing, ...admins].map((m) => m.id)));
+  const missingIds = new Set(missing.map((m) => m.id));
+  const tokens = pickTokens(all.filter((t) => missingIds.has(t.uid) && (!queued || queued.includes(t.id))));
+  const result = await sendInBatches(env, fs, REMIND_PATH, state, { key, step: step + 1 }, tokens, remindContent(emergency));
+  if (!result) return false;
+  // 마지막 단계에서는 관리자에게 명단을 보낸다 (나눠 보낼 때는 처음 한 번).
+  if (!queued && step === REMIND_STEPS_MS.length - 1 && missing.length) {
+    const names = missing.map((m) => m.name).join(', ');
+    const adminIds = new Set(admins.map((m) => m.id));
+    await sendToTokens(env, fs, await fs.getToken(), all.filter((t) => adminIds.has(t.uid)), {
+      kind: 'remind', level: 'alert', urgent: false,
+      title: `📋 아직 신고가 없는 가족 ${missing.length}명`, body: `${names}. 전화로 확인해 주세요.`.slice(0, 300),
+    }, { limit: 8 });
+  }
+  if (tokens.length || missing.length) {
+    await logNotify(fs, SYSTEM_CALLER, 'notify.remind', result, `미신고 ${missing.length}명 · 기기 ${tokens.length}대 대상`);
+  }
+  return tokens.length > 0;
+}
+
+/** 정기 훈련: 정한 날·시각(한국 시간)에 소리 없는 2급 테스트 알람. 비상 중이면 쉰다. */
+export async function runDrill(env, fs, { config, state, emergency, gates, now }) {
+  if (!config?.enabled || emergency?.active) return false;
+  const kst = new Date(now + 9 * 3600e3);
+  const month = kst.toISOString().slice(0, 7);
+  const mine = state?.month === month ? state : null;
+  const queued = mine?.pending?.length ? mine.pending : null;
+  if (!queued && (mine || kst.getUTCDate() !== config.day || kst.getUTCHours() !== config.hour)) return false;
+  const id = queued ? mine.testId : autoId();
+  const ids = new Set((await familyMembers(fs, gates)).map((m) => m.id));
+  const tokens = pickTokens((await tokensFor(fs, ids)).filter((t) => !queued || queued.includes(t.id)));
+  const message = '매월 하는 알림 확인입니다. 앱을 열어 확인을 눌러 주세요.';
+  const result = await sendInBatches(env, fs, DRILL_PATH, state, { month, testId: id }, tokens, {
+    kind: 'test', level: 'alert', ack: `test:${id}`, urgent: false, title: '🔔 정기 훈련 (실제 상황 아님)', body: message,
+  });
+  if (!result) return false;
+  if (!queued) {
+    await fs.commit([{
+      path: `alarmTests/${id}`, exists: false,
+      data: { by: DRILL_ID, byName: DRILL_NAME, at: new Date(now), message, sound: 'alert', notifiedKey: 'sent' },
+    }]);
+  }
+  await logNotify(fs, SYSTEM_CALLER, 'notify.drill', result, `정기 훈련 · 기기 ${tokens.length}대 대상`);
+  return true;
+}
+
+/** 1분마다 하는 일. 앞의 일이 알림을 보냈으면 뒤의 일은 다음 1분으로 미룬다 (외부 호출 한도). */
+export async function runScheduledPush(env, now = Date.now()) {
+  const retried = await retryEmergencyPush(env, now);
+  // 고장 난 기기 몇 대를 다시 시도하는 정도면 아래 일도 함께 한다.
+  if ((retried.sent || 0) + (retried.failed || 0) > 5) return 'retry';
+  if (!env.GOOGLE_SERVICE_ACCOUNT || !env.FIREBASE_PROJECT_ID) return null;
+  const sa = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT);
+  const fs = new Firestore(env.FIREBASE_PROJECT_ID, () => getAccessToken(sa));
+  const [emergency, remind, gates, config, drill] = await fs.batchGet(['emergency/current', REMIND_PATH, 'public/gates', 'config/drill', DRILL_PATH]);
+  if (await remindUnreported(env, fs, { emergency, state: remind, gates, now })) return 'remind';
+  if (await runDrill(env, fs, { config, state: drill, emergency, gates, now })) return 'drill';
+  return null;
 }
 
 /** 가족 전체 테스트 알람. 테스트 문서마다 한 번만 보낸다. */
@@ -821,7 +939,7 @@ export default {
   async scheduled(event, env, ctx) {
     const now = event.scheduledTime || Date.now();
     ctx.waitUntil((async () => {
-      await retryEmergencyPush(env, Date.now()).catch((err) => console.error('알림 다시 보내기 실패', err));
+      await runScheduledPush(env, Date.now()).catch((err) => console.error('알림 다시 보내기 실패', err));
       await checkDisasterMessages(env, now).catch((err) => console.error('재난문자 확인 실패', err));
     })());
   },

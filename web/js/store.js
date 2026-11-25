@@ -381,6 +381,25 @@ export async function saveDisasterSettings(me, { enabled, regions, level2 }) {
   return commitWithTimeout(batch.commit());
 }
 
+// ---------- 정기 훈련 ----------
+
+export const DRILL_ID = 'drill';
+export const watchDrillSettings = (cb, onError) => watchDoc(['config', 'drill'], cb, onError);
+
+export function saveDrillSettings(me, { enabled, day, hour }) {
+  const batch = writeBatch(db);
+  batch.set(ref('config', 'drill'), { enabled, day, hour, updatedBy: me.id, updatedByName: me.name, updatedAt: serverTimestamp() });
+  addAudit(batch, 'drill.settings', { detail: enabled ? `매월 ${day}일 ${hour}시` : '끔' });
+  return commitWithTimeout(batch.commit());
+}
+
+/** 최근 정기 훈련과 각 훈련을 확인한 사람 수 */
+export async function listDrills(max = 6) {
+  const snap = await getDocs(query(collection(db, 'alarmTests'), where('by', '==', DRILL_ID)));
+  const tests = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.at.toMillis() - a.at.toMillis()).slice(0, max);
+  return Promise.all(tests.map(async (x) => ({ ...x, acks: (await getDocs(collection(db, 'alarmTests', x.id, 'acks'))).docs.map((d) => d.id) })));
+}
+
 // ---------- 관리 기록 ----------
 
 // 관리 기록에 남길 "누가". 앱이 로그인한 가족 정보를 넣어 준다.

@@ -622,3 +622,12 @@ test('도움 요청 응답은 볼 수 있는 가족이, 도움 요청이 열려 
   await assertFails(getDocs(query(collection(anon(), 'helpResponses'), where('uid', '==', 'kid'))));
   await assertSucceeds(deleteDoc(doc(as('kid'), 'helpResponses/kid_mom')));
 });
+
+test('정기 훈련 설정은 관리자만, 정한 범위로', async () => {
+  const s = (by, name, extra = {}) => ({ enabled: true, day: 15, hour: 20, updatedBy: by, updatedByName: name, updatedAt: serverTimestamp(), ...extra });
+  await assertFails(setDoc(doc(as('mom'), 'config/drill'), s('mom', '엄마')));
+  await assertSucceeds(setDoc(doc(as('admin'), 'config/drill'), s('admin', '아빠')));
+  await assertFails(setDoc(doc(as('admin'), 'config/drill'), s('admin', '아빠', { day: 31 })));
+  await assertFails(setDoc(doc(as('admin'), 'config/drill'), s('admin', '아빠', { hour: 24 })));
+  await assertFails(getDoc(doc(as('mom'), 'config/drill')));
+});
