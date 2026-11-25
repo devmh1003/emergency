@@ -235,7 +235,7 @@ export function homeView({ state, live, onChange }) {
       let status = '';
       if (!note.value.trim()) {
         status = await choose(t('어떤 상황인가요? 누르면 바로 가족에게 위치와 함께 알리고, 이어서 문자 앱이 열립니다.'), [
-          ...[t('다침'), t('갇힘'), t('아픔'), t('위험')].map((label) => ({ value: label, label, cls: 'btn-secondary' })),
+          ...[t('갇힘'), t('움직일 수 없음'), t('위험')].map((label) => ({ value: label, label, cls: 'btn-secondary' })),
           { value: '', label: t('고르지 않고 보내기'), cls: 'btn-outline choose-wide' },
         ]);
         if (status === null) return;
