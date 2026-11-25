@@ -552,6 +552,8 @@ const AUDIT_LABELS = {
   'notify.help': '도움 요청 알림 발송',
   'code.rekey': '접속 코드 사용자 모두 로그아웃',
   'help.resolve': '구조 완료',
+  'notify.remind': '미신고 다시 알림',
+  'drill.settings': '정기 훈련 설정',
   'lock.clear': '접속 잠금 해제',
   'code.change': '접속 코드 변경',
   'backup.adminCode': '백업 코드로 관리자 코드 변경',

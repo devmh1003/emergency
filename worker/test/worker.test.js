@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { base64UrlEncode, base64UrlDecode, verifyIdToken, signServiceJwt } from '../src/google.js';
 import { fromDocument, toFields } from '../src/firestore.js';
 import worker, {
-  retryEmergencyPush,
+  retryEmergencyPush, runScheduledPush, isUnreported,
   notificationKey, notificationContent, pickTokens, pushMessage, alarmAck, checkDisasterMessages, helpRecipients, helpContent,
 } from '../src/index.js';
 import { countAttempt, lockedUntil, maskIp } from '../src/login.js';
@@ -1002,4 +1002,103 @@ test('도움 요청을 한 대에도 못 보냈으면 다시 요청할 때 보�
   delete store['helpAlerts/kid']; // 흉내 서버는 DELETE 를 처리하지 않는다
   down = false;
   assert.equal((await lpost('/help', token)).data.sent, 1);
+});
+
+// ---------- 미신고 다시 알림, 정기 훈련 ----------
+
+const T = Date.parse('2026-11-15T11:00:00Z'); // 한국 20시
+const iso = (ms) => new Date(ms).toISOString();
+
+function quietStore(declaredAt, extra = {}) {
+  const store = emergencyStore(iso(declaredAt));
+  Object.assign(store['emergency/current'].data, { notifiedKey: `real:${iso(declaredAt)}`, ...extra });
+  return store;
+}
+
+test('미신고 기준: 격상 전 무사 신고는 미신고, 도움 요청은 신고', () => {
+  const e = { active: true, level: 'real', declaredAt: iso(T), realAt: iso(T + 60e3) };
+  const m = (type, ms) => ({ last: { type, clientAt: iso(ms) } });
+  assert.equal(isUnreported({}, e), true);
+  assert.equal(isUnreported(m('safe', T + 30e3), e), true);
+  assert.equal(isUnreported(m('help', T + 30e3), e), false);
+  assert.equal(isUnreported(m('safe', T + 90e3), e), false);
+  assert.equal(isUnreported(m('help', T - 1), e), true);
+});
+
+test('10분·30분에 신고하지 않은 사람에게만 다시 알리고, 30분에는 관리자에게 명단을 보낸다', async () => {
+  const store = quietStore(T);
+  store['members/dad'].data.last = { type: 'safe', clientAt: iso(T + 60e3) };
+  memoryFetch(store);
+  const at = async (min) => { calls = []; const r = await runScheduledPush(env, T + min * 60e3); return [r, sentTo()]; };
+  assert.deepEqual(await at(9), [null, []]);
+  assert.deepEqual(await at(10), ['remind', ['tok-mom']]);
+  assert.deepEqual(await at(11), [null, []]);
+  assert.deepEqual(await at(30), ['remind', ['tok-dad', 'tok-mom']]);
+  assert.match(JSON.parse(fcmCalls().find((c) => c.body.includes('tok-dad')).body).message.notification.body, /엄마/);
+  assert.deepEqual(await at(31), [null, []]);
+});
+
+test('모두 신고했거나, 해제됐거나, 너무 늦었으면 다시 알리지 않는다', async () => {
+  let store = quietStore(T);
+  for (const id of ['dad', 'mom']) store[`members/${id}`].data.last = { type: 'safe', clientAt: iso(T + 60e3) };
+  memoryFetch(store);
+  await runScheduledPush(env, T + 11 * 60e3);
+  assert.equal(fcmCalls().length, 0);
+  store = quietStore(T, { active: false, endedAt: iso(T + 60e3), notifiedKey: `off:${iso(T + 60e3)}` });
+  memoryFetch(store);
+  await runScheduledPush(env, T + 11 * 60e3);
+  assert.equal(fcmCalls().length, 0);
+  store = quietStore(T);
+  memoryFetch(store);
+  for (const h of [5, 5.1, 5.2]) await runScheduledPush(env, T + h * 3600e3);
+  assert.equal(fcmCalls().length, 0);
+});
+
+test('미신고 알림은 한 번에 20대씩 나눠 빠짐없이, 한 번씩만 보낸다', async () => {
+  const store = quietStore(T);
+  for (let i = 0; i < 15; i++) {
+    store[`members/x${i}`] = { data: { name: 'x', active: true, role: 'member', gen: 5 }, updateTime: 'a' };
+    for (const n of [0, 1]) store[`pushTokens/x${i}_${n}`] = { data: { uid: `x${i}`, token: `x${i}-${n}`, at: 'a' }, updateTime: 'b' };
+  }
+  memoryFetch(store);
+  const seen = [];
+  for (const min of [10, 11, 12]) { calls = []; await runScheduledPush(env, T + min * 60e3); assert.ok(calls.length <= 40); seen.push(...sentTo()); }
+  assert.equal(seen.length, 32);
+  assert.equal(new Set(seen).size, 32);
+});
+
+test('정기 훈련은 켜 둔 달의 정한 때에 한 번, 소리 없이, 비상이 아닐 때만', async () => {
+  const base = () => {
+    const s = quietStore(T - 9e6, { active: false, endedAt: iso(T - 8e6), notifiedKey: `off:${iso(T - 8e6)}` });
+    s['config/drill'] = { data: { enabled: true, day: 15, hour: 20 }, updateTime: 'd' };
+    return s;
+  };
+  let store = base();
+  memoryFetch(store);
+  assert.equal(await runScheduledPush(env, T - 60e3), null);
+  assert.equal(await runScheduledPush(env, T), 'drill');
+  const push = JSON.parse(fcmCalls()[0].body).message;
+  assert.equal(push.data.kind, 'test');
+  assert.equal(push.webpush.notification.requireInteraction, false);
+  const t = Object.entries(store).find(([k]) => k.startsWith('alarmTests/'))[1].data;
+  assert.deepEqual([t.by, t.sound], ['drill', 'alert']);
+  calls = [];
+  assert.equal(await runScheduledPush(env, T + 60e3), null);
+  assert.equal(await runScheduledPush(env, Date.parse('2026-12-15T11:30:00Z')), 'drill');
+  store = base();
+  store['config/drill'].data.enabled = false;
+  memoryFetch(store);
+  assert.equal(await runScheduledPush(env, T), null);
+  store = { ...quietStore(T - 5 * 60e3), 'config/drill': { data: { enabled: true, day: 15, hour: 20 }, updateTime: 'd' } };
+  memoryFetch(store);
+  assert.equal(await runScheduledPush(env, T), null);
+});
+
+test('한 기기가 계속 실패해도 미신고 다시 알림은 막히지 않는다', async () => {
+  const store = emergencyStore(iso(T));
+  memoryFetch(store, { fcm: (tok) => new Response('{}', { status: tok === 'tok-dad' ? 503 : 200 }) });
+  await runScheduledPush(env, T + 60e3);
+  calls = [];
+  assert.equal(await runScheduledPush(env, T + 10 * 60e3), 'remind');
+  assert.ok(sentTo().includes('tok-mom'));
 });
