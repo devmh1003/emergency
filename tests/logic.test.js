@@ -124,7 +124,7 @@ test('지난 비상 때 직접 정한 도착 시각은 이번 비상에 쓰지 �
 test('빠른 상태는 메모 앞에 붙고 300자를 넘지 않는다', () => {
   assert.equal(quickNote('갇힘', '', ' 3층 '), '갇힘 · 3층');
   assert.equal(quickNote('', '', ''), '');
-  assert.equal(quickNote('다침', '집', 'x'.repeat(400)).length, 300);
+  assert.equal(quickNote('위험', '집', 'x'.repeat(400)).length, 300);
 });
 
 test('나이 계산', () => {

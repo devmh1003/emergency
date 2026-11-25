@@ -218,7 +218,7 @@ export function memberStatus(member, emergency) {
   return { key: 'idle', label: t('마지막: {label}', { label: checkinLabel(last.type) }), lastAt };
 }
 
-/** 빠른 상태(다침, 이동 중 등)를 메모 앞에 붙인다. 따로 저장하지 않아 예전 버전에서도 메모로 보인다. */
+/** 빠른 상태(갇힘, 이동 중 등)를 메모 앞에 붙인다. 따로 저장하지 않아 예전 버전에서도 메모로 보인다. */
 export function quickNote(...parts) {
   return parts.map((p) => (p || '').trim()).filter(Boolean).join(' · ').slice(0, 300);
 }
