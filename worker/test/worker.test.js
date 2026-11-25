@@ -884,6 +884,42 @@ test('새 문자가 없어도 확인 시각을 남기고, 처음이면 빈 목�
   assert.equal('items' in writes[1].update.fields, false);
 });
 
+test('알림 준비 상태는 관리자에게만, 토큰 없이 준다', async () => {
+  const store = {
+    ...gateStore(),
+    'members/kid': { data: { name: '아이', active: true, role: 'member', gen: 5 }, updateTime: 'u1' },
+    'members/dad': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u2' },
+    'pushTokens/kid_0': { data: { uid: 'kid', token: 'secret-token', platform: 'iPhone', at: '2026-11-01T00:00:00Z' }, updateTime: 'u3' },
+  };
+  memoryFetch(store);
+  assert.equal((await lpost('/admin/readiness', await makeToken({ sub: 'kid' }))).status, 403);
+  const r = await lpost('/admin/readiness', await makeToken({ sub: 'dad' }));
+  assert.deepEqual(r.data.devices, [{ uid: 'kid', platform: 'iPhone', at: '2026-11-01T00:00:00Z' }]);
+  assert.equal(JSON.stringify(r.data).includes('secret'), false);
+});
+
+test('"제가 갑니다"는 저장된 응답이 있을 때 요청한 사람에게만 한 번 간다', async () => {
+  const at = new Date().toISOString();
+  const store = {
+    ...gateStore(),
+    'members/kid': { data: { name: '아이', active: true, role: 'member', gen: 5, last: { type: 'help', at } }, updateTime: 'u1' },
+    'members/dad': { data: { name: '아빠', active: true, role: 'admin', gen: 5 }, updateTime: 'u2' },
+    'pushTokens/kid_0': { data: { uid: 'kid', token: 'tok-kid', at }, updateTime: 'u3' },
+    'pushTokens/dad_0': { data: { uid: 'dad', token: 'tok-dad', at }, updateTime: 'u4' },
+  };
+  memoryFetch(store);
+  const token = await makeToken({ sub: 'dad' });
+  assert.equal((await lpost('/help/respond', token, { uid: 'kid' })).status, 409);
+  assert.equal((await lpost('/help/respond', token, { uid: '../x' })).status, 400);
+  store['helpResponses/kid_dad'] = { data: { uid: 'kid', by: 'dad', byName: '아빠', at }, updateTime: 'u5' };
+  assert.equal((await lpost('/help/respond', token, { uid: 'kid' })).data.sent, 1);
+  assert.deepEqual(sentTo(), ['tok-kid']);
+  store['helpResponses/kid_dad'].data.notifiedKey = 'sent';
+  assert.equal((await lpost('/help/respond', token, { uid: 'kid' })).data.sent, 0);
+  store['members/kid'].data.last.type = 'safe';
+  assert.equal((await lpost('/help/respond', token, { uid: 'kid' })).status, 409);
+});
+
 // ---------- 못 보낸 비상 알림 다시 보내기 ----------
 
 function emergencyStore(declaredAt) {

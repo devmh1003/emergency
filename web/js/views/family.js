@@ -3,12 +3,12 @@
 import { h, toast, savedToast, busy, panel, pageHeader, empty, alertBox, table, ask } from '../dom.js';
 import { errorMessage } from '../firebase.js';
 import {
-  getProfile, getChecklist, watchCheckins, updateMember, deleteMember, deleteCheckin,
+  getProfile, getChecklist, watchCheckins, respondHelp, cancelHelpResponse, resolveHelp, updateMember, deleteMember, deleteCheckin,
 } from '../store.js';
 import { mapView } from '../map.js';
 import {
   memberStatus, statusRank, formatAgo, formatDateTime, cleanPhone, hasLocation, locationUrl,
-  CHECKIN_LABEL, checkinLabel, ageFromBirth, checklistProgress,
+  CHECKIN_LABEL, checkinLabel, helpOpen, ageFromBirth, checklistProgress,
 } from '../logic.js';
 import { t } from '../i18n.js';
 
@@ -75,6 +75,41 @@ export function familyStatusList(state, { compact = false } = {}) {
   ]));
 }
 
+/** 도움을 요청한 사람마다: 메모, 누가 가고 있는지, "제가 갑니다"·"구조 완료" 버튼 */
+export function helpCards(state) {
+  const people = new Map([...state.members, state.me].filter((m) => m && m.active && helpOpen(m, state.emergency)).map((m) => [m.id, m]));
+  if (!people.size) return null;
+  const act = (fn, done) => (e) => busy(e.currentTarget, async () => {
+    try { savedToast(await fn(), done); } catch (err) { toast(errorMessage(err), 'error'); }
+  });
+  return [...people.values()].map((m) => {
+    const mine = m.id === state.me.id;
+    const list = state.helpResponses[m.id] || [];
+    const going = list.some((d) => d.by === state.me.id);
+    return alertBox('error', mine ? t('도움을 요청했습니다') : t('{name}님이 도움을 요청했습니다', { name: m.name }),
+      h('p', null, [m.last.note, formatAgo(m.last.clientAt || m.last.at)].filter(Boolean).join(' · ')),
+      h('p', null, h('strong', null, list.length
+        ? t('가고 있는 사람: {names}', { names: list.map((d) => d.byName).join(', ') })
+        : t('아직 간다고 한 사람이 없습니다.'))),
+      mine ? h('p', { class: 'small' }, t('안전해지면 "나 무사해요"를 누르세요.')) : h('div', { class: 'alert-actions' },
+        going
+          ? h('button', { class: 'btn btn-outline', onClick: act(() => cancelHelpResponse(state.me, m.id), t('취소했습니다.')) }, t('못 가게 됐어요'))
+          : h('button', { class: 'btn btn-safe', onClick: act(() => respondHelp(state.me, m.id), t('가고 있다고 알렸습니다.')) }, t('제가 갑니다')),
+        m.phone ? h('a', { class: 'btn', href: `tel:${cleanPhone(m.phone)}` }, t('📞 전화')) : null,
+        hasLocation(m.last) ? h('a', { class: 'btn btn-outline', href: locationUrl(m.last), target: '_blank', rel: 'noopener' }, t('🗺 마지막 위치')) : null,
+        state.isAdmin ? h('button', {
+          class: 'btn btn-outline',
+          onClick: async (e) => {
+            const button = e.currentTarget;
+            if (!(await ask(t('{name}님의 구조가 끝났나요? 상태가 "무사함"으로 바뀝니다.', { name: m.name }), { ok: t('구조 완료'), cancel: t('취소') }))) return;
+            busy(button, async () => {
+              try { savedToast(await resolveHelp(state.me, m, list), t('구조 완료로 바꿨습니다.')); } catch (err) { toast(errorMessage(err), 'error'); }
+            });
+          },
+        }, t('구조 완료')) : null));
+  });
+}
+
 function latestPoints(state) {
   return state.members.filter((m) => m.active && hasLocation(m.last)).map((m) => {
     const s = memberStatus(m, state.emergency);
@@ -106,6 +141,7 @@ export function familyView({ state, live, onChange, navigate }) {
       { lead: state.isAdmin ? t('가족 전체의 생존신고 상태와 마지막 위치입니다.') : t('나와, 관리자가 지정한 가족(최대 3명)의 상태입니다.') },
       state.isAdmin ? h('button', { class: 'btn', onClick: () => navigate('/admin/member/new') }, t('+ 가족 추가')) : null),
     state.isAdmin ? null : alertBox('info', null, h('p', null, t('개인정보 보호를 위해 관리자가 지정한 가족만 보입니다. 다른 가족의 정보가 필요하면 관리자에게 요청하세요.'))),
+    live(() => helpCards(state)),
     panel(t('상태'), null, live(() => statusSummary(state)), live(() => familyStatusList(state))),
     panel(t('마지막 위치'), null, map.el,
       h('p', { class: 'muted small' }, t('가족이 생존신고나 체크포인트를 남긴 위치입니다. 실시간 추적이 아닙니다.'))));

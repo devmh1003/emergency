@@ -3,10 +3,12 @@
 //   POST /login        접속 코드 확인 (로그인 전). 3번 틀리면 하루 동안 막는다 (login.js)
 //   POST /notify       비상 상태(2급·1급·해제)가 바뀌었으면 가족 모두에게 알림 (상태마다 한 번만)
 //   POST /help         도움 요청: 관련 가족(관리자, 나를 볼 수 있는 가족, 내가 볼 수 있는 가족)에게 위치와 메모를 알림
+//   POST /help/respond 도움 요청에 "제가 갑니다"라고 한 것을 요청한 사람에게 알린다
 //   POST /test-push    내 기기로 테스트 알림
 //   POST /drill        관리자: 가족 전체 테스트 알람 (테스트마다 한 번만)
 //   POST /code/check   관리자·백업 코드: 새 접속 코드가 다른 코드와 겹치는지
 //   POST /admin/rekey  관리자·백업 코드: 코드가 새어 나갔을 때 그 코드로 들어오는 사람들의 로그인 열쇠를 모두 바꿈
+//   POST /admin/readiness 관리자: 가족별 알림 등록 상태 (토큰 제외)
 //   POST /admin/user   관리자: 가족 로그인 계정 삭제 · 비밀번호 초기화
 //   POST /me/delete    본인 계정 삭제 (가족 정보·신고 기록·로그인 계정)
 //   (1분마다 깨어남)   못 보낸 비상 알림 다시 보내기
@@ -715,7 +717,8 @@ async function handleHelp(env, fs, accessToken, caller) {
 /** 그 사람이 남긴 기록: 신고, 게시판 글, 알림 토큰, 도움 요청 발송 표시 */
 async function userRecords(fs, uid) {
   const mine = async (collection) => (await fs.list(collection)).filter((d) => d.uid === uid).map((d) => `${collection}/${d.id}`);
-  return [`helpAlerts/${uid}`, ...(await mine('checkins')), ...(await mine('meetingLogs')), ...(await mine('pushTokens'))];
+  return [`helpAlerts/${uid}`, ...(await mine('checkins')), ...(await mine('meetingLogs')), ...(await mine('pushTokens')),
+    ...(await fs.list('helpResponses')).filter((d) => d.uid === uid || d.by === uid).map((d) => `helpResponses/${d.id}`)];
 }
 
 /** 한 번에 500개까지 쓸 수 있으므로 나눠 쓴다. */
@@ -730,6 +733,25 @@ async function commitAll(fs, writes) {
  * 가족 정보·개인정보·체크리스트·신고 기록·게시판 글·알림 토큰과 로그인 계정을 지우고 이름 목록에서 뺀다.
  * 비상 선언·해제 기록은 가족 전체의 기록이라 남긴다. 마지막 관리자는 지울 수 없다.
  */
+// 저장한 지 이만큼 지난 응답은 뒤늦게 알리지 않는다
+const RESPOND_FRESH_MS = 5 * 60e3;
+
+/** "제가 갑니다" 응답(helpResponses)을 도움을 요청한 사람에게 알린다. 응답마다 한 번. */
+async function handleHelpRespond(env, fs, accessToken, caller, body) {
+  const { uid } = body;
+  if (typeof uid !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(uid) || uid === caller.uid) throw new HttpError(400, '대상이 올바르지 않습니다');
+  const path = `helpResponses/${uid}_${caller.uid}`;
+  const [response, target] = await fs.batchGet([path, `members/${uid}`]);
+  // 응답 문서는 보안 규칙이 볼 수 있는 가족의 열린 도움 요청에만 허락한다.
+  if (!response || response.by !== caller.uid || response.uid !== uid) throw new HttpError(409, '응답이 아직 저장되지 않았습니다');
+  if (!target?.active || target.gen !== caller.gates.gen || target.last?.type !== 'help') throw new HttpError(409, '도움 요청이 이미 끝났습니다');
+  if (response.notifiedKey || !(Date.now() - Date.parse(response.at) < RESPOND_FRESH_MS)) return { sent: 0, skipped: '이미 알렸습니다' };
+  if (!(await fs.setString(path, 'notifiedKey', 'sent', response.updateTime))) return { sent: 0, skipped: '다른 요청이 이미 보내는 중입니다' };
+  return sendToTokens(env, fs, accessToken, await tokensFor(fs, new Set([uid])), {
+    kind: 'help-reply', level: 'alert', title: `🙋 ${caller.member.name}님이 가고 있습니다`, body: '도움 요청에 응답했습니다. 앱에서 누가 오는지 볼 수 있습니다.', urgent: false,
+  });
+}
+
 async function handleDeleteMe(env, fs, accessToken, caller) {
   const { uid, member } = caller;
   const family = await familyMembers(fs, caller.gates);
@@ -752,6 +774,13 @@ async function handleDeleteMe(env, fs, accessToken, caller) {
   });
   await logNotify(fs, caller, 'member.selfDelete', { sent: paths.length, failed: res.ok ? 0 : 1 }, `${member.name} 본인 삭제`);
   return { deleted: paths.length, accountDeleted: res.ok };
+}
+
+/** 관리자: 누가 알림을 켰는지. 토큰 자체는 주지 않는다. */
+async function handleReadiness(fs, caller) {
+  if (caller.member.role !== 'admin') throw new HttpError(403, '관리자만 할 수 있습니다');
+  const ids = new Set((await familyMembers(fs, caller.gates)).map((m) => m.id));
+  return { devices: (await tokensFor(fs, ids)).map(({ uid, platform = '', at = null }) => ({ uid, platform, at })) };
 }
 
 async function handleAdminUser(env, fs, accessToken, caller, body) {
@@ -826,10 +855,12 @@ export default {
       let result;
       if (url.pathname === '/notify') result = await handleNotify(env, fs, caller);
       else if (url.pathname === '/help') result = await handleHelp(env, fs, accessToken, caller);
+      else if (url.pathname === '/help/respond') result = await handleHelpRespond(env, fs, accessToken, caller, body);
       else if (url.pathname === '/test-push') result = await handleTestPush(env, fs, accessToken, caller);
       else if (url.pathname === '/drill') result = await handleDrill(env, fs, accessToken, caller, body);
       else if (url.pathname === '/code/check') result = await handleCodeCheck(env, fs, accessToken, caller, body);
       else if (url.pathname === '/admin/rekey') result = await handleRekey(env, fs, accessToken, caller, body);
+      else if (url.pathname === '/admin/readiness') result = await handleReadiness(fs, caller);
       else if (url.pathname === '/admin/user') result = await handleAdminUser(env, fs, accessToken, caller, body);
       else if (url.pathname === '/me/delete') result = await handleDeleteMe(env, fs, accessToken, caller);
       else throw new HttpError(404, '없는 주소입니다');

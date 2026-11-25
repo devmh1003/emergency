@@ -4,9 +4,9 @@ import { h, field, select, formData, toast, savedToast, busy, panel, foldPanel, 
 import { errorMessage } from '../firebase.js';
 import {
   createMember, updateMember, watchEmergencyLog, watchDisasterSettings, watchDisasterFeed, saveDisasterSettings,
-  watchLoginLocks, clearLoginLock,
+  watchLoginLocks, clearLoginLock, listPushDevices,
 } from '../store.js';
-import { emergencyLogTitle, formatDateTime, toDate } from '../logic.js';
+import { emergencyLogTitle, formatDateTime, toDate, pushReadiness } from '../logic.js';
 import { t } from '../i18n.js';
 import { emergencyControl, testPanel } from './emergency.js';
 import { statusSummary, familyStatusList } from './family.js';
@@ -201,6 +201,35 @@ function lockPanel(unsubs) {
     box);
 }
 
+/** 가족별로 비상 알림을 받을 준비가 됐는지 */
+function readinessPanel(state, onChange) {
+  const box = h('div', null, h('p', { class: 'muted small' }, t('불러오는 중…')));
+  let tokens = null;
+  const TAG = { ok: ['status-safe', t('켜짐')], old: ['status-unknown', t('오래됨')], off: ['status-unknown', t('꺼짐')] };
+  const draw = () => {
+    if (!tokens) return;
+    const rows = state.members.filter((m) => m.active).map((m) => ({ m, r: pushReadiness(tokens.filter((d) => d.uid === m.id)) }));
+    const bad = rows.filter(({ r }) => r.state !== 'ok').length;
+    box.replaceChildren(
+      alertBox(bad ? 'warning' : 'success', null, h('p', null, bad ? t('{n}명은 비상 알림을 못 받을 수 있습니다.', { n: bad }) : t('모두 알림을 받을 준비가 됐습니다.'))),
+      table([t('이름'), t('알림'), t('기기'), t('마지막 접속')], rows.map(({ m, r }) => [
+        m.name,
+        h('span', { class: `tag ${TAG[r.state][0]}` }, TAG[r.state][1]),
+        r.devices.map((d) => t(d)).join(', ') || '-',
+        r.lastAt ? formatDateTime(r.lastAt) : t('알 수 없음'),
+      ])));
+  };
+  onChange(draw);
+  const panelEl = foldPanel(t('📶 알림 준비 점검표'), { hint: t('누가 비상 알림을 받을 수 있는지') },
+    h('p', { class: 'small muted' }, t('마지막 접속은 알림을 켠 휴대폰에서 앱을 연 때입니다. 14일 넘게 열지 않았으면 "오래됨"입니다. 실제로 오는지는 테스트 경보로 확인하세요.')),
+    box);
+  // 펼칠 때마다 새로 불러온다.
+  const load = () => listPushDevices().then((list) => { tokens = list; draw(); })
+    .catch((err) => box.replaceChildren(h('p', { class: 'muted small' }, errorMessage(err))));
+  panelEl.addEventListener('toggle', () => { if (panelEl.open) load(); });
+  return panelEl;
+}
+
 const SHORTCUTS = [
   ['#/admin/meet', '📍', '집합장소 설정', '1~10순위 장소와 시간'],
   ['#/admin/protocols', '📘', '대처법 관리', '내용·체크리스트 편집'],
@@ -250,6 +279,8 @@ export function adminHubView({ state, live, onChange }) {
       h('h3', { class: 'panel-subhead' }, t('등록된 가족')),
       live(() => memberTable(state)),
       h('p', { class: 'small' }, h('a', { href: '#/admin/member/new' }, t('개인정보까지 한 번에 입력해서 추가하기 →')))),
+
+    readinessPanel(state, onChange),
 
     tests,
 

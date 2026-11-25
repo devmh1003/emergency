@@ -5,7 +5,7 @@ import { DEFAULT_PROTOCOLS, RETIRED_PROTOCOL_IDS } from './data/protocols.js';
 import { DEFAULT_PROTOCOLS_EN } from './data/protocols.en.js';
 import { t, lang } from './i18n.js';
 import { maybeAutoPrepare, prepareOffline } from './offline.js';
-import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel, toDate } from './logic.js';
+import { formatRemaining, meetingSchedule, emergencyLabel, emergencyLevel, toDate, helpOpen } from './logic.js';
 import * as store from './store.js';
 import { refreshPushToken } from './push.js';
 import { standbyWanted, startStandby } from './siren.js';
@@ -49,6 +49,8 @@ export const state = {
   serverProtocols: [],
   contacts: [],
   supplies: [],
+  // 도움 요청한 가족 uid → 가겠다고 한 응답 목록
+  helpResponses: {},
   disasterRecent: null,
   checklist: {},
   online: navigator.onLine,
@@ -98,6 +100,7 @@ export function onChange(cb) {
 }
 
 function notify() {
+  syncHelpResponses();
   for (const cb of listeners) cb();
   renderChrome();
 }
@@ -348,6 +351,9 @@ function stopDataSubscriptions() {
   for (const u of linkUnsubs.values()) u();
   linkUnsubs = new Map();
   linkedDocs = new Map();
+  for (const u of responseUnsubs.values()) u();
+  responseUnsubs = new Map();
+  state.helpResponses = {};
   subsKey = '';
 }
 
@@ -369,6 +375,28 @@ function onSubError(err) {
       startDataSubscriptions();
     }
   }, 5000);
+}
+
+// 도움을 요청한 사람(나 포함)이 있는 동안만 그 응답을 지켜본다.
+let responseUnsubs = new Map();
+function syncHelpResponses() {
+  const open = new Set(state.me ? [...state.members, state.me].filter((m) => helpOpen(m, state.emergency)).map((m) => m.id) : []);
+  for (const [id, u] of responseUnsubs) {
+    if (open.has(id)) continue;
+    u();
+    responseUnsubs.delete(id);
+    delete state.helpResponses[id];
+  }
+  for (const id of open) {
+    if (responseUnsubs.has(id)) continue;
+    responseUnsubs.set(id, store.watchHelpResponses(id, (list) => {
+      state.helpResponses[id] = list;
+      notify();
+    }, (err) => {
+      // 예전 규칙이거나 지정이 풀린 경우: 응답 없이 보여 준다.
+      console.warn('도움 요청 응답을 읽을 수 없습니다', err.code);
+    }));
+  }
 }
 
 // ---------- 가족의 도움 요청 ----------

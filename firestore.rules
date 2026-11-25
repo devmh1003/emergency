@@ -541,6 +541,24 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---------- 도움 요청 응답 ("제가 갑니다") ----------
+    // 문서 id: {요청한 사람}_{가는 사람}. 요청을 볼 수 있는 가족만, 도움 요청이 걸려 있는 동안만 남긴다.
+    match /helpResponses/{id} {
+      allow read: if isAdmin() || isSelf(resource.data.uid) || isSelf(resource.data.by) || isLinked(resource.data.uid);
+      allow create: if isMember()
+        && request.resource.data.keys().hasOnly(['uid', 'by', 'byName', 'at'])
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.byName == me().name
+        && str(request.resource.data.uid, 128)
+        && request.resource.data.uid != request.auth.uid
+        && id == request.resource.data.uid + '_' + request.auth.uid
+        && (isAdmin() || isLinked(request.resource.data.uid))
+        && get(memberPath(request.resource.data.uid)).data.last.type == 'help'
+        && request.resource.data.at == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() || isSelf(resource.data.uid) || isSelf(resource.data.by);
+    }
+
     // ---------- 관리 기록 (관리자 작업, 알림 발송 결과) ----------
     // 관리자 화면이 남기는 기록. 알림 발송 결과는 Worker가 서비스 계정으로 남긴다(규칙을 거치지 않음).
 

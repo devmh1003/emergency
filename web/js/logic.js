@@ -218,6 +218,25 @@ export function memberStatus(member, emergency) {
   return { key: 'idle', label: t('마지막: {label}', { label: checkinLabel(last.type) }), lastAt };
 }
 
+/** 아직 풀리지 않은 도움 요청인가 (지난 비상이나 하루 지난 요청은 아니다) */
+export function helpOpen(member, emergency, now = new Date()) {
+  return lastTypeAfter(member?.last, 'checkpoint', emergency, now) === 'help';
+}
+
+// 앱을 이만큼 열지 않았으면 알림이 안 올 수 있다고 본다
+const READY_DAYS = 14;
+
+/** 알림 준비 상태. tokens: 이 사람의 알림 등록 문서들. state: 'ok' | 'old' | 'off' */
+export function pushReadiness(tokens, now = new Date()) {
+  const list = tokens.map((d) => ({ at: toDate(d.at), ua: d.platform || '' }))
+    .sort((a, b) => (b.at?.getTime() || 0) - (a.at?.getTime() || 0));
+  if (!list.length) return { state: 'off', lastAt: null, devices: [] };
+  const lastAt = list[0].at;
+  const old = !lastAt || now.getTime() - lastAt.getTime() > READY_DAYS * 24 * HOUR;
+  const device = ({ ua }) => (/FamilyEmergencyApp/.test(ua) ? '안드로이드 앱' : /iPhone|iPad/.test(ua) ? '아이폰 웹' : /Android/.test(ua) ? '안드로이드 웹' : '컴퓨터');
+  return { state: old ? 'old' : 'ok', lastAt, devices: [...new Set(list.map(device))] };
+}
+
 /** 빠른 상태(갇힘, 이동 중 등)를 메모 앞에 붙인다. 따로 저장하지 않아 예전 버전에서도 메모로 보인다. */
 export function quickNote(...parts) {
   return parts.map((p) => (p || '').trim()).filter(Boolean).join(' · ').slice(0, 300);
@@ -532,6 +551,7 @@ const AUDIT_LABELS = {
   'disaster.settings': '재난문자 자동 경보 설정',
   'notify.help': '도움 요청 알림 발송',
   'code.rekey': '접속 코드 사용자 모두 로그아웃',
+  'help.resolve': '구조 완료',
   'lock.clear': '접속 잠금 해제',
   'code.change': '접속 코드 변경',
   'backup.adminCode': '백업 코드로 관리자 코드 변경',
